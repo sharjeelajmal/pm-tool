@@ -136,6 +136,19 @@ export default function Home() {
   const [chatInput, setChatInput] = React.useState<string>("");
   const [isSendingComment, setIsSendingComment] = React.useState<boolean>(false);
   const [chatReadCounts, setChatReadCounts] = React.useState<Record<string, number>>({});
+  const [isLoggingOut, setIsLoggingOut] = React.useState<boolean>(false);
+
+  const handleLogout = React.useCallback(async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {}
+    try {
+      await logout();
+    } catch {}
+    window.location.href = "/login";
+  }, [isLoggingOut]);
 
   
   // Media Chat State
@@ -1511,16 +1524,26 @@ export default function Home() {
             </button>
           )}
 
-          <div className="flex items-center gap-3 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer group">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-sm shadow-md group-hover:shadow-blue-500/30 transition-shadow">
-              {syncInfo?.portal === 'business' && syncInfo?.username ? syncInfo.username.charAt(0).toUpperCase() : 'N'}
+          <div className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-white/5 transition-colors group">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-sm shadow-md group-hover:shadow-blue-500/30 transition-shadow shrink-0">
+                {syncInfo?.portal === 'business' && syncInfo?.username ? syncInfo.username.charAt(0).toUpperCase() : 'N'}
+              </div>
+              <div className="flex flex-col min-w-0 flex-1">
+                <span className="font-bold text-sm text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                  {syncInfo?.portal === 'business' && syncInfo?.username ? syncInfo.username : 'Notebook'}
+                </span>
+                <span className="text-[10px] text-slate-500 font-semibold truncate capitalize">{syncInfo?.portal === 'business' ? 'Business Workspace' : 'Personal Workspace'}</span>
+              </div>
             </div>
-            <div className="flex flex-col min-w-0 flex-1">
-              <span className="font-bold text-sm text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                {syncInfo?.portal === 'business' && syncInfo?.username ? syncInfo.username : 'Notebook'}
-              </span>
-              <span className="text-[10px] text-slate-500 font-semibold truncate capitalize">{syncInfo?.portal === 'business' ? 'Business Workspace' : 'Personal Workspace'}</span>
-            </div>
+            <button
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors cursor-pointer"
+              title="Logout"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -1599,15 +1622,12 @@ export default function Home() {
             </motion.div>
             
             <button
-              onClick={() => {
-                React.startTransition(() => {
-                  logout();
-                });
-              }}
-              className="flex items-center justify-center w-10 h-10 rounded-full border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0F172A] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors shadow-sm"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-slate-200 dark:border-white/10 bg-white dark:bg-[#0F172A] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
               title="Logout"
             >
-              <LogOut className="w-4 h-4" />
+              {isLoggingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
             </button>
           </div>
         </header>
