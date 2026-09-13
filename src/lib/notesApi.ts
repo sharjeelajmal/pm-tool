@@ -11,15 +11,12 @@ export type NotePayload = {
 };
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const bustUrl = url.includes("?") ? `${url}&_=${Date.now()}` : `${url}?_=${Date.now()}`;
-
-  const res = await fetch(bustUrl, {
+  // ❌ Cache buster (bustUrl) aur 'no-store' ko remove kar diya gaya hai
+  const res = await fetch(url, {
     ...init,
-    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-      Pragma: "no-cache",
+      // Frontend se cache bypass headers hata diye gaye hain
       ...init?.headers,
     },
   });
@@ -27,14 +24,14 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const data = await res.json().catch(() => ({
     success: false,
     error: res.status === 404
-      ? "Server API missing — latest code is not deployed on live yet"
+      ? "Server API missing - latest code is not deployed on live yet"
       : `Request failed (${res.status})`,
   }));
 
   if (res.status === 404) {
     return {
       success: false,
-      error: "Server API missing — latest code is not deployed on live yet",
+      error: "Server API missing - latest code is not deployed on live yet",
       notes: [],
     } as T;
   }
