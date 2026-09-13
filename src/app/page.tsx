@@ -434,7 +434,7 @@ export default function Home() {
     if (!showChatPanel || !activeNoteId || syncInfo?.portal !== "business") return;
     const intervalId = setInterval(() => {
       reloadFromServer();
-    }, 5000);
+    }, 30000);
     return () => clearInterval(intervalId);
   }, [showChatPanel, activeNoteId, syncInfo?.portal, reloadFromServer]);
 
@@ -487,7 +487,7 @@ export default function Home() {
       void reloadFromServer();
     };
 
-    const interval = window.setInterval(refreshNotes, 10000);
+    const interval = window.setInterval(refreshNotes, 60000);
     document.addEventListener("visibilitychange", refreshNotes);
     window.addEventListener("focus", refreshNotes);
     return () => {
@@ -782,36 +782,36 @@ export default function Home() {
     submitMediaComment(chatInput, 'text');
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        let width = img.width;
-        let height = img.height;
-        
-        if (width > MAX_WIDTH) {
-          height = Math.round((height * MAX_WIDTH) / width);
-          width = MAX_WIDTH;
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        
-        const base64String = canvas.toDataURL('image/jpeg', 0.7);
-        submitMediaComment('Image', 'image', base64String);
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
+
+    setIsSendingComment(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error("Upload failed");
+      }
+
+      const data = await res.json();
+      if (!data.url) {
+        throw new Error("No URL returned from upload");
+      }
+
+      await submitMediaComment('Image', 'image', data.url);
+    } catch (err) {
+      console.error("Failed to upload image:", err);
+      alert("Failed to upload image. Please try again.");
+      setIsSendingComment(false);
+    }
   };
 
   const startRecording = async () => {
@@ -827,15 +827,36 @@ export default function Home() {
         }
       };
       
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = () => {
-          const base64Audio = reader.result as string;
-          submitMediaComment('Voice Note', 'audio', base64Audio);
-        };
+      mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(track => track.stop());
+        if (audioChunksRef.current.length === 0) return;
+        setIsSendingComment(true);
+        try {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const audioFile = new File([audioBlob], `voice-note-${Date.now()}.webm`, { type: 'audio/webm' });
+          const formData = new FormData();
+          formData.append("file", audioFile);
+
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            throw new Error("Upload failed");
+          }
+
+          const data = await res.json();
+          if (!data.url) {
+            throw new Error("No URL returned from upload");
+          }
+
+          await submitMediaComment('Voice Note', 'audio', data.url);
+        } catch (err) {
+          console.error("Failed to upload voice note:", err);
+          alert("Failed to upload voice note. Please try again.");
+          setIsSendingComment(false);
+        }
       };
       
       mediaRecorder.start();
