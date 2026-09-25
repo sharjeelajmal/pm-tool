@@ -121,6 +121,7 @@ class RealtimeHub {
       this.userClients.set(username, new Set());
     }
     this.userClients.get(username)!.add(client);
+    this.broadcastGlobalPresence();
 
     return () => {
       this.unsubscribeUser(username, client);
@@ -135,16 +136,49 @@ class RealtimeHub {
         this.userClients.delete(username);
       }
     }
+    this.broadcastGlobalPresence();
+  }
+
+  public getOnlineUsers(): string[] {
+    return Array.from(this.userClients.keys());
+  }
+
+  public isUserOnline(username: string): boolean {
+    const clients = this.userClients.get(username);
+    return !!(clients && clients.size > 0);
+  }
+
+  public broadcastGlobalPresence() {
+    const onlineUsers = this.getOnlineUsers();
+    this.userClients.forEach((clients) => {
+      clients.forEach((client) => {
+        try {
+          client.send("global_presence", { onlineUsers });
+        } catch {}
+      });
+    });
+  }
+
+  public broadcastToAllUsers(eventType: string, data: any) {
+    this.userClients.forEach((clients) => {
+      clients.forEach((client) => {
+        try {
+          client.send(eventType, data);
+        } catch {}
+      });
+    });
   }
 
   public sendToUser(username: string, eventType: string, data: any) {
-    const clients = this.userClients.get(username);
-    if (!clients) return;
-
-    clients.forEach((client) => {
-      try {
-        client.send(eventType, data);
-      } catch {}
+    const target = (username || "").toLowerCase().trim();
+    this.userClients.forEach((clients, u) => {
+      if (u.toLowerCase().trim() === target) {
+        clients.forEach((client) => {
+          try {
+            client.send(eventType, data);
+          } catch {}
+        });
+      }
     });
   }
 }

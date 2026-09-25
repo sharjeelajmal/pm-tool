@@ -11,12 +11,15 @@ export type NotePayload = {
 };
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  // ❌ Cache buster (bustUrl) aur 'no-store' ko remove kar diya gaya hai
-  const res = await fetch(url, {
+  const separator = url.includes("?") ? "&" : "?";
+  const finalUrl = init?.method && init.method !== "GET" ? url : `${url}${separator}_t=${Date.now()}`;
+  const res = await fetch(finalUrl, {
     ...init,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
-      // Frontend se cache bypass headers hata diye gaye hain
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       ...init?.headers,
     },
   });

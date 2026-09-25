@@ -150,7 +150,7 @@ export function VoiceRecorderUI({
 
   if (variant === "inline") {
     return (
-      <div className="w-full flex items-center justify-between gap-3 px-3 py-2 bg-rose-50/90 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-500/20 rounded-2xl shadow-inner select-none transition-all">
+      <div className="w-full flex items-center justify-between gap-3 px-3 py-2 bg-blue-50/90 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-500/25 rounded-2xl shadow-inner select-none transition-all">
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
@@ -162,10 +162,10 @@ export function VoiceRecorderUI({
           </button>
           <div className="flex items-center gap-1.5">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600 dark:bg-blue-500" />
             </span>
-            <span className="font-mono font-bold text-xs text-rose-600 dark:text-rose-400">
+            <span className="font-mono font-bold text-xs text-blue-600 dark:text-blue-400">
               {formatTime(recordingTime)}
             </span>
           </div>
@@ -175,7 +175,7 @@ export function VoiceRecorderUI({
           {waveform.map((h, i) => (
             <div
               key={i}
-              className="flex-1 max-w-[4px] bg-rose-500/80 dark:bg-rose-400 rounded-full transition-all duration-75"
+              className="flex-1 max-w-[4px] bg-blue-600 dark:bg-blue-400 rounded-full transition-all duration-75"
               style={{
                 height: `${h}%`,
                 minHeight: "5px",
@@ -207,10 +207,10 @@ export function VoiceRecorderUI({
       className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-4 px-5 py-3 rounded-full bg-slate-900/95 dark:bg-[#0F172A]/95 backdrop-blur-xl border border-white/15 text-white shadow-2xl shadow-blue-500/15 select-none"
     >
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-500">
+        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-500">
           <Mic className="w-4 h-4 animate-pulse" />
         </div>
-        <span className="font-mono font-bold text-sm tracking-wider text-rose-400">
+        <span className="font-mono font-bold text-sm tracking-wider text-blue-400">
           {formatTime(recordingTime)}
         </span>
       </div>
@@ -219,7 +219,7 @@ export function VoiceRecorderUI({
         {waveform.map((h, i) => (
           <div
             key={i}
-            className="flex-1 max-w-[4.5px] bg-rose-500 rounded-full transition-all duration-75"
+            className="flex-1 max-w-[4.5px] bg-blue-500 rounded-full transition-all duration-75"
             style={{
               height: `${h}%`,
               minHeight: "5px",
@@ -241,7 +241,7 @@ export function VoiceRecorderUI({
         <button
           type="button"
           onClick={handleStopAndSave}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
         >
           <Square className="w-3 h-3 fill-current" />
           <span>Save Voice</span>

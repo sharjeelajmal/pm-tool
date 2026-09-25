@@ -44,6 +44,7 @@ import { VoiceRecorderUI } from "@/components/voice/VoiceRecorderUI";
 import { MessageStatusTicks } from "@/components/chat/MessageStatusTicks";
 import { MessageInfoModal } from "@/components/chat/MessageInfoModal";
 import { TopNotificationBanner, AssignedMessageNotification } from "@/components/chat/TopNotificationBanner";
+import { AssignedUsersStatusModal } from "@/components/chat/AssignedUsersStatusModal";
 import { 
   fetchNotesApi, 
   saveNoteApi, 
@@ -210,6 +211,20 @@ export default function Home() {
     showChatPanelRef.current = showChatPanel;
     if (showChatPanel && activeNoteId && syncInfo?.portal === "business") {
       void markCommentsAsReadApi(activeNoteId);
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id === activeNoteId && n.comments) {
+            return {
+              ...n,
+              comments: n.comments.map((c) => ({
+                ...c,
+                readBy: Array.from(new Set([...(c.readBy || []), syncInfo.username || ""])),
+              })),
+            };
+          }
+          return n;
+        })
+      );
     }
     if (showChatPanel && activeNoteId) {
       const timer = setTimeout(() => {
@@ -217,19 +232,62 @@ export default function Home() {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [showChatPanel, activeNoteId, syncInfo?.portal, scrollToBottom]);
+  }, [showChatPanel, activeNoteId, syncInfo?.portal, syncInfo?.username, scrollToBottom]);
 
   const [activeNotification, setActiveNotification] = React.useState<AssignedMessageNotification | null>(null);
+  const [onlineUsers, setOnlineUsers] = React.useState<string[]>([]);
+  const [showAssignedMembersModal, setShowAssignedMembersModal] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     if (!syncInfo?.username) return;
 
     const notifSource = new EventSource("/api/realtime/notifications");
 
+    notifSource.addEventListener("global_presence", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (Array.isArray(data.onlineUsers)) {
+          setOnlineUsers(data.onlineUsers);
+        }
+      } catch {}
+    });
+
     notifSource.addEventListener("assigned_note_message", (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data && data.noteId) {
+        if (!data || !data.noteId) return;
+
+        const currentUsername = (syncInfo?.username || "").toLowerCase().trim();
+        const sender = (data.sender || "").toLowerCase().trim();
+
+        // 1. Skip self-messages
+        if (sender && currentUsername && sender === currentUsername) {
+          return;
+        }
+
+        // 2. Real-time update note's comments so red unread count badge increments immediately without refresh!
+        if (data.comment) {
+          setNotes((prev) =>
+            prev.map((n) => {
+              if (n.id === data.noteId) {
+                const comments = n.comments || [];
+                if (comments.some((c) => c.id === data.comment.id)) return n;
+                return { ...n, comments: [...comments, data.comment] };
+              }
+              return n;
+            })
+          );
+        }
+
+        // 3. Notification criteria: User is assigned, or is creator, or note unassigned in business portal
+        const assignedList: string[] = Array.isArray(data.assignedTo) ? data.assignedTo : [];
+        const isAssigned = assignedList.some(
+          (u) => u && u.toLowerCase().trim() === currentUsername
+        );
+        const isCreator = !!(data.createdBy && data.createdBy.toLowerCase().trim() === currentUsername);
+        const isTarget = isAssigned || isCreator || assignedList.length === 0;
+
+        if (isTarget) {
           if (isEditingRef.current && activeNoteIdRef.current === data.noteId && showChatPanelRef.current) {
             return;
           }
@@ -237,14 +295,16 @@ export default function Home() {
           setActiveNotification({
             id: "notif-" + Date.now(),
             noteId: data.noteId,
-            noteTitle: data.noteTitle,
-            sender: data.sender,
-            text: data.text,
+            noteTitle: data.noteTitle || "Untitled Note",
+            sender: data.sender || "Colleague",
+            text: data.text || "New message",
             type: data.type,
-            createdAt: data.createdAt,
+            createdAt: data.createdAt || new Date().toISOString(),
           });
         }
-      } catch {}
+      } catch (err) {
+        console.error("Error in assigned_note_message handler:", err);
+      }
     });
 
     return () => {
@@ -507,40 +567,61 @@ export default function Home() {
     }
 
     setNotes((prev) => {
-      if (isEditingRef.current && activeNoteIdRef.current) {
-        const editingId = activeNoteIdRef.current;
-        const localDraft = prev.find((n) => n.id === editingId);
-        if (!localDraft) {
-          return result.notes;
-        }
-
-        const mergedFromServer = result.notes.map((serverNote) =>
-          serverNote.id === editingId
-            ? {
-                ...serverNote,
-                title: localDraft.title,
-                content: localDraft.content,
-                tags: localDraft.tags,
-                patientId: localDraft.patientId,
-                categoryId: localDraft.categoryId,
-                pin: localDraft.pin,
-                isPinned: localDraft.isPinned,
-                assignedTo: localDraft.assignedTo,
-                createdBy: serverNote.createdBy || localDraft.createdBy,
-                updatedAt: localDraft.updatedAt,
-              }
-            : serverNote
+      const mergeComments = (serverComments: CommentItem[] = [], localComments: CommentItem[] = []) => {
+        const map = new Map<string, CommentItem>();
+        serverComments.forEach((c) => map.set(c.id, c));
+        localComments.forEach((c) => {
+          if (!map.has(c.id)) {
+            map.set(c.id, c);
+          } else {
+            const existing = map.get(c.id)!;
+            map.set(c.id, {
+              ...existing,
+              readBy: Array.from(new Set([...(existing.readBy || []), ...(c.readBy || [])])),
+              deliveredTo: Array.from(new Set([...(existing.deliveredTo || []), ...(c.deliveredTo || [])])),
+            });
+          }
+        });
+        return Array.from(map.values()).sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
+      };
 
-        const editingNoteOnServer = result.notes.some((n) => n.id === editingId);
-        if (!editingNoteOnServer) {
-          return [localDraft, ...mergedFromServer];
+      const editingId = activeNoteIdRef.current;
+      const localDraft = isEditingRef.current && editingId ? prev.find((n) => n.id === editingId) : null;
+
+      const mergedFromServer = result.notes.map((serverNote) => {
+        const local = prev.find((n) => n.id === serverNote.id);
+        const mergedComments = mergeComments(serverNote.comments || [], local?.comments || []);
+
+        if (localDraft && serverNote.id === editingId) {
+          return {
+            ...serverNote,
+            title: localDraft.title,
+            content: localDraft.content,
+            tags: localDraft.tags,
+            patientId: localDraft.patientId,
+            categoryId: localDraft.categoryId,
+            pin: localDraft.pin,
+            isPinned: localDraft.isPinned,
+            assignedTo: localDraft.assignedTo,
+            createdBy: serverNote.createdBy || localDraft.createdBy,
+            comments: mergedComments,
+            updatedAt: localDraft.updatedAt,
+          };
         }
 
-        return mergedFromServer;
+        return {
+          ...serverNote,
+          comments: mergedComments,
+        };
+      });
+
+      if (localDraft && !result.notes.some((n) => n.id === editingId)) {
+        return [localDraft, ...mergedFromServer];
       }
 
-      return result.notes;
+      return mergedFromServer;
     });
 
     return result;
@@ -860,6 +941,9 @@ export default function Home() {
       try {
         const data = JSON.parse(e.data);
         if (data.comment) {
+          if (data.comment.username === syncInfo?.username) {
+            return;
+          }
           setNotes((prev) =>
             prev.map((note) => {
               if (note.id === activeNoteId) {
@@ -1639,6 +1723,20 @@ export default function Home() {
     });
   }, [filteredNotes, sidebarFilter]);
 
+  const getUnreadCommentCount = React.useCallback(
+    (note: Note) => {
+      const currentUsername = syncInfo?.username;
+      if (!currentUsername || !note.comments || note.comments.length === 0) return 0;
+      return note.comments.filter(
+        (c) =>
+          c.username !== currentUsername &&
+          !c.isDeleted &&
+          !(c.readBy || []).includes(currentUsername)
+      ).length;
+    },
+    [syncInfo?.username]
+  );
+
   const navLinks = [
     { id: "all", label: "All Notes", icon: FileText },
     { id: "pinned", label: "Pinned", icon: Pin },
@@ -1646,7 +1744,9 @@ export default function Home() {
     { id: "trash", label: "Trash", icon: Trash2 },
   ];
 
-  const renderNoteCard = (note: Note) => (
+  const renderNoteCard = (note: Note) => {
+    const unreadCount = getUnreadCommentCount(note);
+    return (
                   <motion.div
                     key={note.id}
                     onClick={() => handleNoteCardClick(note)}
@@ -1708,6 +1808,14 @@ export default function Home() {
                             <Pin className={`w-3.5 h-3.5 ${note.isPinned ? "fill-current" : ""}`} />
                           </button>
                           <span className="truncate">{note.title || "Untitled Note"}</span>
+                          {unreadCount > 0 && (
+                            <span
+                              className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-md shadow-rose-500/30 animate-pulse"
+                              title={`${unreadCount} unread message${unreadCount > 1 ? "s" : ""}`}
+                            >
+                              {unreadCount > 99 ? "99+" : unreadCount}
+                            </span>
+                          )}
                         </span>
                         
                         {!selectionMode && (
@@ -1825,7 +1933,8 @@ export default function Home() {
                       )}
                     </div>
                   </motion.div>
-  );
+    );
+  };
 
   return (
     <div className="h-screen bg-[#F8FAFC] dark:bg-[#0B1120] text-slate-900 dark:text-slate-100 flex overflow-hidden transition-colors duration-500 font-sans">
@@ -2869,9 +2978,25 @@ export default function Home() {
                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                             Project Chat
                           </span>
-                          <button onClick={() => setShowChatPanel(false)} className="p-1 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setShowAssignedMembersModal(true)}
+                              className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors border border-slate-200/60 dark:border-white/10"
+                              title="View Assigned Members Online / Offline Status"
+                            >
+                              <Users className="w-3.5 h-3.5 text-blue-500" />
+                              <span>Members</span>
+                              {activeNote &&
+                                ((activeNote.assignedTo || []).some((u) => onlineUsers.includes(u)) ||
+                                  (activeNote.createdBy && onlineUsers.includes(activeNote.createdBy))) && (
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+                                )}
+                            </button>
+                            <button onClick={() => setShowChatPanel(false)} className="p-1 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                         
                         <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 custom-scrollbar">
@@ -2977,7 +3102,7 @@ export default function Home() {
                                     </div>
                                   </div>
 
-                                  <div className={`px-3 py-2 rounded-2xl text-xs overflow-hidden ${
+                                  <div className={isAudio ? "text-xs select-none" : `px-3 py-2 rounded-2xl text-xs overflow-hidden ${
                                     isMe 
                                       ? 'bg-blue-600 text-white rounded-tr-sm' 
                                       : 'bg-white dark:bg-[#1E293B] border border-slate-200/60 dark:border-white/5 text-slate-800 dark:text-slate-200 rounded-tl-sm'
@@ -3025,7 +3150,7 @@ export default function Home() {
                                     ) : isImage ? (
                                       <img src={c.mediaData} alt="Shared image" className="max-w-full rounded-lg object-contain mt-1 max-h-48" />
                                     ) : isAudio ? (
-                                      <VoiceNotePlayer src={c.mediaData || ""} isMe={isMe} className="mt-1" />
+                                      <VoiceNotePlayer src={c.mediaData || ""} isMe={isMe} />
                                     ) : (
                                       <span className="break-words">{c.text}</span>
                                     )}
@@ -3157,6 +3282,18 @@ export default function Home() {
         onOpen={handleOpenNotificationNote}
         onDismiss={() => setActiveNotification(null)}
       />
+
+      <AnimatePresence>
+        {showAssignedMembersModal && activeNote && (
+          <AssignedUsersStatusModal
+            assignedTo={activeNote.assignedTo || []}
+            createdBy={activeNote.createdBy}
+            currentUsername={syncInfo?.username}
+            onlineUsers={onlineUsers}
+            onClose={() => setShowAssignedMembersModal(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {isUserModalOpen && <UserManagementModal onClose={() => setIsUserModalOpen(false)} />}
     </div>

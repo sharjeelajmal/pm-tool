@@ -35,6 +35,8 @@ export async function GET(request: Request) {
           send,
         });
 
+        send("global_presence", { onlineUsers: realtimeHub.getOnlineUsers() });
+
         const heartbeat = setInterval(() => {
           if (isClosed) {
             clearInterval(heartbeat);
