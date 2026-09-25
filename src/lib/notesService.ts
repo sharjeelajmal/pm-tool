@@ -57,7 +57,12 @@ export function formatNote(note: {
       text: c.text,
       type: c.type,
       mediaData: c.mediaData,
-      createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt
+      createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
+      readBy: c.readBy || [],
+      deliveredTo: c.deliveredTo || [],
+      isEdited: !!c.isEdited,
+      isDeleted: !!c.isDeleted,
+      updatedAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt,
     })),
     status: note.status || 'Pending',
     updatedAt: note.updatedAt.toISOString(),

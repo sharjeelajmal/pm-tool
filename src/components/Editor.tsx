@@ -13,7 +13,7 @@ import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import Image from "@tiptap/extension-image";
+import { ResizableImageExtension } from "@/components/ResizableImage";
 import Placeholder from "@tiptap/extension-placeholder";
 import Typography from "@tiptap/extension-typography";
 import { Table } from "@tiptap/extension-table";
@@ -65,39 +65,16 @@ import { createPortal } from "react-dom";
 import { Node, mergeAttributes } from "@tiptap/core";
 import { motion, AnimatePresence } from "framer-motion";
 
-export const AudioExtension = Node.create({
-  name: "audio",
-  group: "block",
-  atom: true,
-
-  addAttributes() {
-    return {
-      src: {
-        default: null,
-      },
-    };
-  },
-
-  parseHTML() {
-    return [
-      {
-        tag: "audio[src]",
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return [
-      "div",
-      { class: "audio-wrapper my-4 flex items-center justify-center p-4 bg-slate-50 dark:bg-neutral-900 rounded-2xl border border-slate-200 dark:border-white/10" },
-      ["audio", mergeAttributes(HTMLAttributes, { controls: true, class: "w-full max-w-md" }), ["source", { src: HTMLAttributes.src }]],
-    ];
-  },
-});
+import { VoiceNoteExtension } from "@/components/voice/VoiceNoteExtension";
+import { VoiceRecorderUI } from "@/components/voice/VoiceRecorderUI";
 
 interface EditorProps {
   content: string;
   onChange: (html: string) => void;
+  remoteTypingUser?: string | null;
+  remoteUploadingUser?: string | null;
+  onUploadStatusChange?: (isUploading: boolean, fileType?: string) => void;
+  collaborativeUpdateKey?: number;
 }
 
 const TEXT_COLORS = [
@@ -159,7 +136,14 @@ function ToolbarSep() {
   return <div className="w-px h-5 bg-slate-200/80 dark:bg-white/10 shrink-0 mx-0.5" />;
 }
 
-export function Editor({ content, onChange }: EditorProps) {
+export function Editor({
+  content,
+  onChange,
+  remoteTypingUser,
+  remoteUploadingUser,
+  onUploadStatusChange,
+  collaborativeUpdateKey,
+}: EditorProps) {
   const [mounted, setMounted] = React.useState(false);
   const [tablePickerOpen, setTablePickerOpen] = React.useState(false);
   const [colorPickerOpen, setColorPickerOpen] = React.useState(false);
@@ -263,18 +247,14 @@ export function Editor({ content, onChange }: EditorProps) {
     setLinkPickerOpen(false);
   };
 
-  // Recording State
   const [isRecording, setIsRecording] = React.useState(false);
-  const [recordingTime, setRecordingTime] = React.useState(0);
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const audioChunksRef = React.useRef<Blob[]>([]);
-  const timerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handleFileUpload = async (file: File) => {
     if (!file.type.startsWith("image/") && !file.type.startsWith("audio/") && !file.type.startsWith("video/")) return;
     try {
       setIsUploading(true);
       setUploadText(file.type.startsWith("audio/") ? "Uploading Voice Message..." : "Uploading Image...");
+      onUploadStatusChange?.(true, file.type.startsWith("audio/") ? "audio" : "image");
       
       const formData = new FormData();
       formData.append("file", file);
@@ -291,7 +271,7 @@ export function Editor({ content, onChange }: EditorProps) {
         if (file.type.startsWith("audio/") || file.type.startsWith("video/")) {
           editor.chain().focus().insertContent(`<audio controls src="${data.url}"></audio>`).run();
         } else {
-          editor.chain().focus().setImage({ src: data.url }).run();
+          editor.chain().focus().insertContent({ type: "image", attrs: { src: data.url } }).run();
         }
       }
     } catch (error) {
@@ -299,55 +279,12 @@ export function Editor({ content, onChange }: EditorProps) {
       alert("Failed to upload file. Make sure Cloudinary credentials are set.");
     } finally {
       setIsUploading(false);
+      onUploadStatusChange?.(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const file = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: "audio/webm" });
-        stream.getTracks().forEach((track) => track.stop());
-        await handleFileUpload(file);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingTime(0);
-      timerRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone. Please check permissions.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-    const s = (seconds % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -369,7 +306,7 @@ export function Editor({ content, onChange }: EditorProps) {
       Superscript,
       TaskList,
       TaskItem.configure({ nested: true }),
-      Image.configure({ HTMLAttributes: { class: "editor-image" } }),
+      ResizableImageExtension,
       Placeholder.configure({ placeholder: "Start writing your note…" }),
       Typography,
       Table.configure({
@@ -378,7 +315,7 @@ export function Editor({ content, onChange }: EditorProps) {
         cellMinWidth: 50,
         lastColumnResizable: true,
       }),
-      AudioExtension,
+      VoiceNoteExtension,
       TableRow,
       TableHeader,
       TableCell,
@@ -430,10 +367,18 @@ export function Editor({ content, onChange }: EditorProps) {
   React.useEffect(() => {
     if (!editor) return;
     const isSameContent = editor.getHTML() === content;
-    if (!isSameContent && !editor.isFocused) {
-      editor.commands.setContent(content, { emitUpdate: false });
+    if (!isSameContent) {
+      if (!editor.isFocused) {
+        editor.commands.setContent(content, { emitUpdate: false });
+      } else if (collaborativeUpdateKey) {
+        const { from, to } = editor.state.selection;
+        editor.commands.setContent(content, { emitUpdate: false });
+        try {
+          editor.commands.setTextSelection({ from, to });
+        } catch {}
+      }
     }
-  }, [content, editor]);
+  }, [content, editor, collaborativeUpdateKey]);
 
   if (!editor) {
     return (
@@ -492,28 +437,17 @@ export function Editor({ content, onChange }: EditorProps) {
           </motion.div>
         )}
       </AnimatePresence>
-      {/* Recording Overlay */}
       <AnimatePresence>
         {isRecording && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-4 px-6 py-3 rounded-full bg-slate-900 text-white shadow-2xl shadow-blue-500/20 border border-white/10"
-          >
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shadow-[0_0_10px_rgba(244,63,94,0.8)]" />
-              <span className="font-mono font-bold text-sm tracking-wider">{formatTime(recordingTime)}</span>
-            </div>
-            <div className="w-px h-5 bg-white/20" />
-            <button 
-              onClick={stopRecording} 
-              className="flex items-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500 hover:border-rose-500 border border-white/20 px-3 py-1.5 rounded-lg transition-all"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              Stop & Save
-            </button>
-          </motion.div>
+          <VoiceRecorderUI
+            variant="floating"
+            onFinish={async (blob) => {
+              setIsRecording(false);
+              const file = new File([blob], `voice-message-${Date.now()}.webm`, { type: blob.type || "audio/webm" });
+              await handleFileUpload(file);
+            }}
+            onCancel={() => setIsRecording(false)}
+          />
         )}
       </AnimatePresence>
       {/* Toolbar */}
@@ -624,7 +558,7 @@ export function Editor({ content, onChange }: EditorProps) {
           <ToolbarBtn onClick={addImage} title="Insert image or media">
             <ImageIcon className="w-3.5 h-3.5" />
           </ToolbarBtn>
-          <ToolbarBtn active={isRecording} onClick={isRecording ? stopRecording : startRecording} title={isRecording ? "Stop recording" : "Record voice message"} className={isRecording ? "!bg-rose-500 text-white animate-pulse" : ""}>
+          <ToolbarBtn active={isRecording} onClick={() => setIsRecording((prev) => !prev)} title={isRecording ? "Cancel recording" : "Record voice message"} className={isRecording ? "!bg-rose-500 text-white animate-pulse" : ""}>
             <Mic className="w-3.5 h-3.5" />
           </ToolbarBtn>
 
@@ -908,6 +842,24 @@ export function Editor({ content, onChange }: EditorProps) {
         </AnimatePresence>,
         document.body
       )}
+
+      <AnimatePresence>
+        {(remoteTypingUser || remoteUploadingUser) && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="absolute bottom-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-600/90 dark:bg-blue-500/90 text-white text-xs font-semibold shadow-lg shadow-blue-500/25 backdrop-blur-md pointer-events-none"
+          >
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+            {remoteUploadingUser ? (
+              <span>{remoteUploadingUser} is uploading media...</span>
+            ) : (
+              <span>{remoteTypingUser} is typing...</span>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

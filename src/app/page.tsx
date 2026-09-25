@@ -26,11 +26,23 @@ import {
   Square,
   LogOut,
   MoreHorizontal,
+  MoreVertical,
+  Info,
+  Pencil,
+  Ban,
   Users,
-  Loader2
+  Loader2,
+  User,
+  Edit2,
+  Check,
+  Mic
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { logout } from "@/actions/auth";
+import { VoiceNotePlayer } from "@/components/voice/VoiceNotePlayer";
+import { VoiceRecorderUI } from "@/components/voice/VoiceRecorderUI";
+import { MessageStatusTicks } from "@/components/chat/MessageStatusTicks";
+import { MessageInfoModal } from "@/components/chat/MessageInfoModal";
 import { 
   fetchNotesApi, 
   saveNoteApi, 
@@ -38,8 +50,28 @@ import {
   unlockNoteApi,
   togglePinApi,
   fetchCategoriesApi,
-  createCategoryApi
+  createCategoryApi,
+  updateCategoryApi,
+  deleteCategoryApi,
+  addCommentApi,
+  editCommentApi,
+  deleteCommentApi,
+  markCommentsAsReadApi
 } from "@/lib/notesApi";
+
+export interface CommentItem {
+  id: string;
+  username: string;
+  text: string;
+  type?: string;
+  mediaData?: string;
+  createdAt: string;
+  readBy?: string[];
+  deliveredTo?: string[];
+  isEdited?: boolean;
+  isDeleted?: boolean;
+  updatedAt?: string;
+}
 
 interface Note {
   id: string;
@@ -56,14 +88,7 @@ interface Note {
   createdBy?: string;
   isTrashed?: boolean;
   status?: string;
-  comments?: {
-    id: string;
-    username: string;
-    text: string;
-    type?: string;
-    mediaData?: string;
-    createdAt: string;
-  }[];
+  comments?: CommentItem[];
 }
 
 // Quick helper to strip HTML tags for card grid summaries safely on both SSR and CSR
@@ -103,12 +128,33 @@ export default function Home() {
   const [usersList, setUsersList] = React.useState<{id: string, username: string}[]>([]);
   const [isAddingCategory, setIsAddingCategory] = React.useState(false);
   const [newCategoryName, setNewCategoryName] = React.useState("");
+  const [editingCategoryId, setEditingCategoryId] = React.useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = React.useState<string>("");
+  const [categoryToDelete, setCategoryToDelete] = React.useState<{ id: string; name: string; noteCount: number } | null>(null);
+  const [isDeletingCategory, setIsDeletingCategory] = React.useState<boolean>(false);
+
+  const [collaborators, setCollaborators] = React.useState<string[]>([]);
+  const [remoteTypingUser, setRemoteTypingUser] = React.useState<string | null>(null);
+  const [remoteUploadingUser, setRemoteUploadingUser] = React.useState<string | null>(null);
+  const [collaborativeUpdateKey, setCollaborativeUpdateKey] = React.useState<number>(0);
+  const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const uploadingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const broadcastThrottleRef = React.useRef<NodeJS.Timeout | null>(null);
+
   const [openMenuId, setOpenMenuId] = React.useState<string | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = React.useState<boolean>(false);
 
   // Close menu on click outside
   React.useEffect(() => {
-    const handleClick = () => setOpenMenuId(null);
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest("[data-comment-menu]")) {
+        setActiveCommentMenuId(null);
+      }
+      if (!target?.closest("[data-note-menu]")) {
+        setOpenMenuId(null);
+      }
+    };
     document.addEventListener("click", handleClick);
     return () => document.removeEventListener("click", handleClick);
   }, []);
@@ -137,6 +183,40 @@ export default function Home() {
   const [isSendingComment, setIsSendingComment] = React.useState<boolean>(false);
   const [chatReadCounts, setChatReadCounts] = React.useState<Record<string, number>>({});
   const [isLoggingOut, setIsLoggingOut] = React.useState<boolean>(false);
+  const [activeCommentMenuId, setActiveCommentMenuId] = React.useState<string | null>(null);
+  const [messageInfoComment, setMessageInfoComment] = React.useState<CommentItem | null>(null);
+  const [editingCommentId, setEditingCommentId] = React.useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = React.useState<string>("");
+  const [isSubmittingEdit, setIsSubmittingEdit] = React.useState<boolean>(false);
+  const showChatPanelRef = React.useRef(false);
+  const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = React.useCallback((instant = false) => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTo({
+        top: chatScrollRef.current.scrollHeight,
+        behavior: instant ? "auto" : "smooth",
+      });
+    }
+    messagesEndRef.current?.scrollIntoView({
+      behavior: instant ? "auto" : "smooth",
+      block: "end",
+    });
+  }, []);
+
+  React.useEffect(() => {
+    showChatPanelRef.current = showChatPanel;
+    if (showChatPanel && activeNoteId && syncInfo?.portal === "business") {
+      void markCommentsAsReadApi(activeNoteId);
+    }
+    if (showChatPanel && activeNoteId) {
+      const timer = setTimeout(() => {
+        scrollToBottom(true);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [showChatPanel, activeNoteId, syncInfo?.portal, scrollToBottom]);
 
   const handleLogout = React.useCallback(async () => {
     if (isLoggingOut) return;
@@ -153,10 +233,6 @@ export default function Home() {
   
   // Media Chat State
   const [isRecording, setIsRecording] = React.useState<boolean>(false);
-  const [recordingTime, setRecordingTime] = React.useState<number>(0);
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const audioChunksRef = React.useRef<Blob[]>([]);
-  const recordingTimerRef = React.useRef<any>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = React.useState<Set<string>>(new Set());
   const [deleteDialog, setDeleteDialog] = React.useState<{
@@ -410,6 +486,7 @@ export default function Home() {
                 pin: localDraft.pin,
                 isPinned: localDraft.isPinned,
                 assignedTo: localDraft.assignedTo,
+                createdBy: serverNote.createdBy || localDraft.createdBy,
                 updatedAt: localDraft.updatedAt,
               }
             : serverNote
@@ -636,6 +713,266 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handlePhysicalKeys);
   }, [pinModalOpen, pinInputValue, pinTargetNoteId]);
 
+  const broadcastContent = React.useCallback((content?: string, title?: string) => {
+    if (!activeNoteId) return;
+    if (broadcastThrottleRef.current) clearTimeout(broadcastThrottleRef.current);
+    broadcastThrottleRef.current = setTimeout(() => {
+      fetch(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "content_update",
+          content,
+          title,
+        }),
+      }).catch(() => {});
+    }, 250);
+  }, [activeNoteId]);
+
+  const broadcastTyping = React.useCallback(() => {
+    if (!activeNoteId) return;
+    fetch(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "typing" }),
+    }).catch(() => {});
+  }, [activeNoteId]);
+
+  const handleUploadStatusChange = React.useCallback((isUploadingMedia: boolean, fileType?: string) => {
+    if (!activeNoteId) return;
+    if (isUploadingMedia) {
+      fetch(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "uploading", fileType }),
+      }).catch(() => {});
+    }
+  }, [activeNoteId]);
+
+  React.useEffect(() => {
+    if (!isEditing || !activeNoteId) {
+      setCollaborators([]);
+      setRemoteTypingUser(null);
+      setRemoteUploadingUser(null);
+      return;
+    }
+
+    const eventSource = new EventSource(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`);
+
+    eventSource.addEventListener("presence", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.users && Array.isArray(data.users)) {
+          const others = data.users.filter((u: string) => u !== syncInfo?.username);
+          setCollaborators(others);
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("typing", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.username && data.username !== syncInfo?.username) {
+          setRemoteTypingUser(data.username);
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = setTimeout(() => {
+            setRemoteTypingUser(null);
+          }, 2500);
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("uploading", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.username && data.username !== syncInfo?.username) {
+          setRemoteUploadingUser(data.username);
+          if (uploadingTimeoutRef.current) clearTimeout(uploadingTimeoutRef.current);
+          uploadingTimeoutRef.current = setTimeout(() => {
+            setRemoteUploadingUser(null);
+          }, 4000);
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("content_update", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.username && data.username !== syncInfo?.username) {
+          setNotes((prev) =>
+            prev.map((note) =>
+              note.id === activeNoteId
+                ? {
+                    ...note,
+                    content: data.content !== undefined ? data.content : note.content,
+                    title: data.title !== undefined ? data.title : note.title,
+                    updatedAt: "Just now",
+                  }
+                : note
+            )
+          );
+          setCollaborativeUpdateKey((k) => k + 1);
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("comment_added", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.comment) {
+          setNotes((prev) =>
+            prev.map((note) => {
+              if (note.id === activeNoteId) {
+                const currentComments = note.comments || [];
+                const exists = currentComments.some((c) => c.id === data.comment.id);
+                if (exists) return note;
+                return {
+                  ...note,
+                  comments: [...currentComments, data.comment],
+                };
+              }
+              return note;
+            })
+          );
+          if (showChatPanelRef.current) {
+            void markCommentsAsReadApi(activeNoteId);
+            setTimeout(() => scrollToBottom(false), 30);
+          }
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("comment_edited", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.commentId) {
+          setNotes((prev) =>
+            prev.map((note) => {
+              if (note.id === activeNoteId) {
+                return {
+                  ...note,
+                  comments: (note.comments || []).map((c) =>
+                    c.id === data.commentId
+                      ? {
+                          ...c,
+                          text: data.text,
+                          isEdited: true,
+                          updatedAt: data.updatedAt,
+                        }
+                      : c
+                  ),
+                };
+              }
+              return note;
+            })
+          );
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("comment_deleted", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.commentId) {
+          setNotes((prev) =>
+            prev.map((note) => {
+              if (note.id === activeNoteId) {
+                return {
+                  ...note,
+                  comments: (note.comments || []).map((c) =>
+                    c.id === data.commentId
+                      ? {
+                          ...c,
+                          text: data.text,
+                          isDeleted: true,
+                          mediaData: "",
+                          updatedAt: data.updatedAt,
+                        }
+                      : c
+                  ),
+                };
+              }
+              return note;
+            })
+          );
+        }
+      } catch {}
+    });
+
+    eventSource.addEventListener("comments_read", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.username) {
+          setNotes((prev) =>
+            prev.map((note) => {
+              if (note.id === activeNoteId) {
+                return {
+                  ...note,
+                  comments: (note.comments || []).map((c) => ({
+                    ...c,
+                    readBy: Array.from(new Set([...(c.readBy || []), data.username])),
+                    deliveredTo: Array.from(new Set([...(c.deliveredTo || []), data.username])),
+                  })),
+                };
+              }
+              return note;
+            })
+          );
+        }
+      } catch {}
+    });
+
+    return () => {
+      eventSource.close();
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (uploadingTimeoutRef.current) clearTimeout(uploadingTimeoutRef.current);
+    };
+  }, [isEditing, activeNoteId, syncInfo?.username]);
+
+  const handleSaveCategoryName = async (categoryId: string) => {
+    if (!editingCategoryName.trim()) {
+      setEditingCategoryId(null);
+      return;
+    }
+    try {
+      const res = await updateCategoryApi(categoryId, editingCategoryName.trim());
+      if (res.success && res.category) {
+        setCategories((prev) =>
+          prev.map((c) => (c.id === categoryId ? { ...c, name: res.category!.name } : c))
+        );
+      }
+    } catch (err) {
+      console.error("Failed to update category name:", err);
+    } finally {
+      setEditingCategoryId(null);
+      setEditingCategoryName("");
+    }
+  };
+
+  const handleConfirmDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+    setIsDeletingCategory(true);
+    try {
+      const res = await deleteCategoryApi(categoryToDelete.id);
+      if (res.success) {
+        setCategories((prev) => prev.filter((c) => c.id !== categoryToDelete.id));
+        setNotes((prev) => prev.filter((n) => n.categoryId !== categoryToDelete.id));
+        if (sidebarFilter === categoryToDelete.id) {
+          setSidebarFilter("all");
+        }
+        if (activeNote && activeNote.categoryId === categoryToDelete.id) {
+          setIsEditing(false);
+          setActiveNoteId("");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete category:", err);
+    } finally {
+      setIsDeletingCategory(false);
+      setCategoryToDelete(null);
+    }
+  };
+
   // Handler for note content editing (TipTap update)
   const handleContentChange = (content: string) => {
     if (!activeNote) return;
@@ -649,6 +986,8 @@ export default function Home() {
       )
     );
     setIsDraftDirty(true);
+    broadcastTyping();
+    broadcastContent(content, undefined);
   };
 
   // Handler for note title editing
@@ -662,6 +1001,7 @@ export default function Home() {
       )
     );
     setIsDraftDirty(true);
+    broadcastContent(undefined, title);
   };
 
   // Handler for note patientId editing
@@ -745,31 +1085,50 @@ export default function Home() {
 
   const submitMediaComment = async (text: string, type: string = 'text', mediaData?: string) => {
     if (!activeNote || (type === 'text' && !text.trim())) return;
+    
+    const commentText = type === 'text' ? text.trim() : text;
+    if (type === 'text') setChatInput("");
     setIsSendingComment(true);
+
+    const tempId = "temp-" + Date.now();
+    const tempComment: CommentItem = {
+      id: tempId,
+      username: syncInfo?.username || "You",
+      text: commentText,
+      type,
+      mediaData,
+      createdAt: new Date().toISOString(),
+      readBy: [syncInfo?.username || "You"],
+      deliveredTo: [syncInfo?.username || "You"],
+      isEdited: false,
+      isDeleted: false,
+    };
+    
+    setNotes(prev =>
+      prev.map(note =>
+        note.id === activeNoteId
+          ? { ...note, comments: [...(note.comments || []), tempComment] }
+          : note
+      )
+    );
+    
+    setTimeout(() => scrollToBottom(false), 20);
+
     try {
-      const tempComment = {
-        id: "temp-" + Date.now(),
-        username: syncInfo?.username || "You",
-        text: type === 'text' ? text.trim() : text,
-        type,
-        mediaData,
-        createdAt: new Date().toISOString()
-      };
-      
-      setNotes(prev =>
-        prev.map(note =>
-          note.id === activeNoteId
-            ? { ...note, comments: [...(note.comments || []), tempComment] }
-            : note
-        )
-      );
-      
-      if (type === 'text') setChatInput("");
-      
-      const { addCommentApi } = await import("@/lib/notesApi");
-      const res = await addCommentApi(activeNote.id, text, type, mediaData);
+      const res = await addCommentApi(activeNote.id, commentText, type, mediaData);
       if (res.success && res.comment) {
-        await reloadFromServer();
+        setNotes(prev =>
+          prev.map(note =>
+            note.id === activeNoteId
+              ? {
+                  ...note,
+                  comments: (note.comments || []).map(c =>
+                    c.id === tempId ? { ...c, ...res.comment } : c
+                  ),
+                }
+              : note
+          )
+        );
       }
     } catch (err) {
       console.error("Failed to send comment:", err);
@@ -780,6 +1139,89 @@ export default function Home() {
 
   const handleSendComment = () => {
     submitMediaComment(chatInput, 'text');
+  };
+
+  const handleStartEditComment = (comment: CommentItem) => {
+    setActiveCommentMenuId(null);
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.text);
+  };
+
+  const handleCancelEditComment = () => {
+    setEditingCommentId(null);
+    setEditingCommentText("");
+  };
+
+  const handleSaveEditComment = async (commentId: string) => {
+    if (!activeNoteId || !editingCommentText.trim()) return;
+    setIsSubmittingEdit(true);
+    try {
+      const res = await editCommentApi(activeNoteId, commentId, editingCommentText.trim());
+      if (res.success) {
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === activeNoteId
+              ? {
+                  ...n,
+                  comments: (n.comments || []).map((c) =>
+                    c.id === commentId
+                      ? {
+                          ...c,
+                          text: res.text || editingCommentText.trim(),
+                          isEdited: true,
+                          updatedAt: res.updatedAt || new Date().toISOString(),
+                        }
+                      : c
+                  ),
+                }
+              : n
+          )
+        );
+        setEditingCommentId(null);
+        setEditingCommentText("");
+      } else {
+        alert(res.error || "Failed to edit message");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to edit message");
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!activeNoteId) return;
+    setActiveCommentMenuId(null);
+    if (!confirm("Are you sure you want to delete this message?")) return;
+    try {
+      const res = await deleteCommentApi(activeNoteId, commentId);
+      if (res.success) {
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === activeNoteId
+              ? {
+                  ...n,
+                  comments: (n.comments || []).map((c) =>
+                    c.id === commentId
+                      ? {
+                          ...c,
+                          text: "This message was deleted",
+                          isDeleted: true,
+                          mediaData: "",
+                          updatedAt: res.updatedAt || new Date().toISOString(),
+                        }
+                      : c
+                  ),
+                }
+              : n
+          )
+        );
+      } else {
+        alert(res.error || "Failed to delete message");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete message");
+    }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -814,80 +1256,7 @@ export default function Home() {
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-        if (audioChunksRef.current.length === 0) return;
-        setIsSendingComment(true);
-        try {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const audioFile = new File([audioBlob], `voice-note-${Date.now()}.webm`, { type: 'audio/webm' });
-          const formData = new FormData();
-          formData.append("file", audioFile);
 
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!res.ok) {
-            throw new Error("Upload failed");
-          }
-
-          const data = await res.json();
-          if (!data.url) {
-            throw new Error("No URL returned from upload");
-          }
-
-          await submitMediaComment('Voice Note', 'audio', data.url);
-        } catch (err) {
-          console.error("Failed to upload voice note:", err);
-          alert("Failed to upload voice note. Please try again.");
-          setIsSendingComment(false);
-        }
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingTime(0);
-      
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => {
-          if (prev >= 59) {
-            stopRecording();
-            return 60;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-      
-    } catch (err) {
-      console.error("Microphone access denied or not available", err);
-      alert("Microphone access is required to send voice notes.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-    }
-  };
 
   const handleCreateNote = () => {
     const tempId = "temp-" + Date.now();
@@ -902,7 +1271,8 @@ export default function Home() {
       categoryId: defaultCategoryId,
       isLocked: false,
       pin: "",
-      status: "Pending"
+      status: "Pending",
+      createdBy: syncInfo?.username || "You",
     };
     setNotes(prev => [newNote, ...prev]);
     openEditor(tempId);
@@ -1515,18 +1885,98 @@ export default function Home() {
                 </span>
               </div>
               
-              {categories.map(cat => (
-                <div 
-                  key={cat.id}
-                  onClick={() => setSidebarFilter(cat.id)}
-                  className={`flex items-center justify-between px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer group ${sidebarFilter === cat.id ? "bg-blue-50 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400" : "bg-transparent hover:bg-slate-100 dark:hover:bg-white/5 text-slate-600 dark:text-slate-300"}`}
-                >
-                  <span className="group-hover:translate-x-1 transition-transform truncate mr-2">{cat.name}</span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors ${sidebarFilter === cat.id ? "bg-white dark:bg-[#0B1120] text-blue-600 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-blue-500/20" : "bg-slate-200/50 dark:bg-white/10 text-slate-500 dark:text-slate-400 group-hover:bg-blue-100 dark:group-hover:bg-blue-500/20 group-hover:text-blue-600 dark:group-hover:text-blue-400"}`}>
-                    {notes.filter(n => n.categoryId === cat.id).length}
-                  </span>
-                </div>
-              ))}
+              {categories.map((cat) => {
+                const isEditingThisCat = editingCategoryId === cat.id;
+                const catNoteCount = notes.filter((n) => n.categoryId === cat.id && !n.isTrashed).length;
+
+                return (
+                  <div
+                    key={cat.id}
+                    onClick={() => {
+                      if (!isEditingThisCat) setSidebarFilter(cat.id);
+                    }}
+                    className={`flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer group relative ${
+                      sidebarFilter === cat.id
+                        ? "bg-blue-50 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                        : "bg-transparent hover:bg-slate-100 dark:hover:bg-white/5 text-slate-600 dark:text-slate-300"
+                    }`}
+                  >
+                    {isEditingThisCat ? (
+                      <div className="flex items-center gap-1.5 w-full" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingCategoryName}
+                          onChange={(e) => setEditingCategoryName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveCategoryName(cat.id);
+                            if (e.key === "Escape") setEditingCategoryId(null);
+                          }}
+                          className="flex-1 bg-white dark:bg-[#0F172A] border border-blue-500 rounded px-1.5 py-0.5 text-xs text-slate-800 dark:text-slate-200 outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveCategoryName(cat.id)}
+                          className="p-1 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 rounded transition-colors"
+                          title="Save"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingCategoryId(null)}
+                          className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 rounded transition-colors"
+                          title="Cancel"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="group-hover:translate-x-0.5 transition-transform truncate mr-2 flex-1">
+                          {cat.name}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors ${
+                              sidebarFilter === cat.id
+                                ? "bg-white dark:bg-[#0B1120] text-blue-600 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-blue-500/20"
+                                : "bg-slate-200/50 dark:bg-white/10 text-slate-500 dark:text-slate-400 group-hover:bg-blue-100 dark:group-hover:bg-blue-500/20 group-hover:text-blue-600 dark:group-hover:text-blue-400"
+                            }`}
+                          >
+                            {catNoteCount}
+                          </span>
+                          <div className="opacity-0 group-hover:opacity-100 flex items-center transition-opacity ml-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingCategoryId(cat.id);
+                                setEditingCategoryName(cat.name);
+                              }}
+                              className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded transition-colors"
+                              title="Edit Category Name"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCategoryToDelete({ id: cat.id, name: cat.name, noteCount: catNoteCount });
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded transition-colors"
+                              title="Delete Category"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1886,6 +2336,70 @@ export default function Home() {
                       <>
                         <Trash2 className="w-3.5 h-3.5" />
                         Delete
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Category Delete Confirmation Modal */}
+      <AnimatePresence>
+        {categoryToDelete && (
+          <div
+            className="fixed inset-0 z-[75] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => !isDeletingCategory && setCategoryToDelete(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 8 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl bg-white dark:bg-[#0F172A] border border-slate-200/50 dark:border-white/5 p-6 shadow-2xl"
+            >
+              <div className="flex flex-col items-center text-center gap-4">
+                <div className="w-14 h-14 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 ring-4 ring-rose-500/5">
+                  <Trash2 className="w-7 h-7" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="font-extrabold text-lg text-slate-800 dark:text-white">
+                    Delete Category
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+                    Bhai aapki is category <strong className="text-rose-500 font-bold">&quot;{categoryToDelete.name}&quot;</strong> mein{" "}
+                    <span className="inline-block px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold">
+                      {categoryToDelete.noteCount} notes
+                    </span>{" "}
+                    hain, wo bhi delete ho jayenge saath.
+                  </p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    Are you sure you want to permanently delete this category and all associated notes?
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 w-full pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCategoryToDelete(null)}
+                    disabled={isDeletingCategory}
+                    className="flex-1 h-11 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Keep Category
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleConfirmDeleteCategory()}
+                    disabled={isDeletingCategory}
+                    className="flex-1 h-11 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/25"
+                  >
+                    {isDeletingCategory ? (
+                      <span className="animate-pulse">Deleting...</span>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete All
                       </>
                     )}
                   </button>
@@ -2264,6 +2778,20 @@ export default function Home() {
                         </span>
                       </>
                     )}
+                    <span className="text-slate-300 dark:text-slate-700">|</span>
+                    <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-semibold" title="Author of this note">
+                      <User className="w-3 h-3 text-indigo-500" />
+                      <span>Created by: <strong className="font-bold text-slate-700 dark:text-slate-200">{activeNote.createdBy || (syncInfo?.portal === 'personal' ? 'You' : 'System')}</strong></span>
+                    </span>
+                    {collaborators.length > 0 && (
+                      <>
+                        <span className="text-slate-300 dark:text-slate-700">|</span>
+                        <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-200 dark:border-emerald-500/20">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>Collaborators: {collaborators.join(", ")}</span>
+                        </span>
+                      </>
+                    )}
                     {activeNote.tags?.map((t, idx) => (
                       <span key={idx} className="px-1.5 py-px rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold">{t}</span>
                     ))}
@@ -2279,6 +2807,10 @@ export default function Home() {
                       key={activeNoteId}
                       content={activeNote.content}
                       onChange={handleContentChange}
+                      remoteTypingUser={remoteTypingUser}
+                      remoteUploadingUser={remoteUploadingUser}
+                      collaborativeUpdateKey={collaborativeUpdateKey}
+                      onUploadStatusChange={handleUploadStatusChange}
                     />
                   </div>
 
@@ -2302,7 +2834,7 @@ export default function Home() {
                           </button>
                         </div>
                         
-                        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 custom-scrollbar">
+                        <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 custom-scrollbar">
                           {(!activeNote.comments || activeNote.comments.length === 0) ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-center px-4">
                               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2 opacity-50"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
@@ -2314,42 +2846,205 @@ export default function Home() {
                               const isMe = c.username === syncInfo?.username;
                               const isImage = c.type === 'image';
                               const isAudio = c.type === 'audio';
+                              const isDeleted = !!c.isDeleted;
+                              const isEditingThis = editingCommentId === c.id;
+                              const within5Min = (Date.now() - new Date(c.createdAt).getTime()) <= 5 * 60 * 1000;
                               
                               return (
-                                <div key={c.id} className={`flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
-                                  <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 px-1">{isMe ? 'You' : c.username}</span>
+                                <div key={c.id} className={`group/msg flex flex-col max-w-[85%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
+                                  <div className={`flex items-center gap-1.5 mb-0.5 px-1 w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500">{isMe ? 'You' : c.username}</span>
+                                    <div className="relative" data-comment-menu="true">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          e.nativeEvent.stopImmediatePropagation();
+                                          setActiveCommentMenuId((prev) => (prev === c.id ? null : c.id));
+                                        }}
+                                        className="cursor-pointer opacity-70 hover:opacity-100 p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                        title="Message options"
+                                      >
+                                        <MoreVertical className="w-3.5 h-3.5 pointer-events-none" />
+                                      </button>
+
+                                      {activeCommentMenuId === c.id && (
+                                        <div
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.nativeEvent.stopImmediatePropagation();
+                                          }}
+                                          className={`absolute z-[90] bottom-full mb-1.5 ${isMe ? 'right-0' : 'left-0'} min-w-[145px] py-1.5 bg-white dark:bg-[#1E293B] rounded-xl shadow-2xl border border-slate-200/90 dark:border-white/15 text-xs flex flex-col`}
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setMessageInfoComment(c);
+                                              setActiveCommentMenuId(null);
+                                            }}
+                                            className="flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                          >
+                                            <Info className="w-3.5 h-3.5 text-blue-500" />
+                                            <span>Message info</span>
+                                          </button>
+
+                                          {isMe && !isDeleted && (
+                                            <>
+                                              {(!c.type || c.type === 'text') && (
+                                                within5Min ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleStartEditComment(c)}
+                                                    className="flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                                  >
+                                                    <Pencil className="w-3.5 h-3.5 text-amber-500" />
+                                                    <span>Edit</span>
+                                                  </button>
+                                                ) : (
+                                                  <div className="flex items-center justify-between px-3 py-2 text-slate-400 opacity-60 cursor-not-allowed">
+                                                    <span className="flex items-center gap-2">
+                                                      <Pencil className="w-3.5 h-3.5" />
+                                                      <span className="line-through">Edit</span>
+                                                    </span>
+                                                    <span className="text-[9px] font-mono">Expired</span>
+                                                  </div>
+                                                )
+                                              )}
+
+                                              {within5Min ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDeleteComment(c.id)}
+                                                  className="flex items-center gap-2 px-3 py-2 text-left text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors cursor-pointer"
+                                                >
+                                                  <Trash2 className="w-3.5 h-3.5" />
+                                                  <span>Delete</span>
+                                                </button>
+                                              ) : (
+                                                <div className="flex items-center justify-between px-3 py-2 text-slate-400 opacity-60 cursor-not-allowed">
+                                                  <span className="flex items-center gap-2">
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                    <span className="line-through">Delete</span>
+                                                  </span>
+                                                  <span className="text-[9px] font-mono">Expired</span>
+                                                </div>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
                                   <div className={`px-3 py-2 rounded-2xl text-xs overflow-hidden ${
                                     isMe 
                                       ? 'bg-blue-600 text-white rounded-tr-sm' 
                                       : 'bg-white dark:bg-[#1E293B] border border-slate-200/60 dark:border-white/5 text-slate-800 dark:text-slate-200 rounded-tl-sm'
                                   }`}>
-                                    {isImage ? (
+                                    {isEditingThis ? (
+                                      <div className="flex flex-col gap-1.5 min-w-[180px]">
+                                        <input
+                                          type="text"
+                                          value={editingCommentText}
+                                          onChange={(e) => setEditingCommentText(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") handleSaveEditComment(c.id);
+                                            if (e.key === "Escape") handleCancelEditComment();
+                                          }}
+                                          autoFocus
+                                          disabled={isSubmittingEdit}
+                                          className="w-full bg-white/20 dark:bg-white/10 text-xs px-2 py-1 rounded-lg border border-white/30 text-white placeholder-white/70 focus:outline-none"
+                                        />
+                                        <div className="flex items-center justify-end gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={handleCancelEditComment}
+                                            disabled={isSubmittingEdit}
+                                            className="p-1 rounded hover:bg-white/20 text-white text-[10px]"
+                                            title="Cancel"
+                                          >
+                                            <X className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSaveEditComment(c.id)}
+                                            disabled={isSubmittingEdit}
+                                            className="p-1 rounded bg-white text-blue-600 hover:bg-slate-100 text-[10px]"
+                                            title="Save"
+                                          >
+                                            {isSubmittingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : isDeleted ? (
+                                      <div className="flex items-center gap-1.5 italic text-slate-300 dark:text-slate-400 py-0.5">
+                                        <Ban className="w-3.5 h-3.5 opacity-70" />
+                                        <span>This message was deleted</span>
+                                      </div>
+                                    ) : isImage ? (
                                       <img src={c.mediaData} alt="Shared image" className="max-w-full rounded-lg object-contain mt-1 max-h-48" />
                                     ) : isAudio ? (
-                                      <audio src={c.mediaData} controls className="h-8 max-w-[200px] mt-1 outline-none" />
+                                      <VoiceNotePlayer src={c.mediaData || ""} isMe={isMe} className="mt-1" />
                                     ) : (
                                       <span className="break-words">{c.text}</span>
                                     )}
                                   </div>
-                                  <span className="text-[8px] text-slate-400 mt-0.5 px-1">{new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+
+                                  <div className={`flex items-center gap-1 mt-0.5 px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <span className="text-[8px] text-slate-400">
+                                      {new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    {c.isEdited && !isDeleted && (
+                                      <span className="text-[8px] text-slate-400 italic">edited</span>
+                                    )}
+                                    {isMe && !isDeleted && (
+                                      <MessageStatusTicks
+                                        readBy={c.readBy}
+                                        deliveredTo={c.deliveredTo}
+                                        currentUsername={syncInfo?.username}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })
                           )}
+                          <div ref={messagesEndRef} className="h-0 w-full shrink-0" />
                         </div>
 
                         <div className="p-3 bg-white dark:bg-neutral-900 border-t border-slate-200/60 dark:border-white/10 relative">
                           <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
                           {isRecording ? (
-                            <div className="flex items-center gap-2 justify-between bg-red-50 dark:bg-red-500/10 rounded-xl px-4 py-2 border border-red-200 dark:border-red-500/30">
-                              <div className="flex items-center gap-2">
-                                <motion.div animate={{ opacity: [1, 0.3, 1] }} transition={{ repeat: Infinity, duration: 1 }} className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                                <span className="text-xs font-bold text-red-600 dark:text-red-400">Recording... 0:{recordingTime.toString().padStart(2, '0')}</span>
-                              </div>
-                              <button onClick={stopRecording} className="p-1 rounded-full bg-red-100 dark:bg-red-500/20 text-red-600 hover:bg-red-200 dark:hover:bg-red-500/30 transition-colors">
-                                <Square className="w-4 h-4 fill-current" />
-                              </button>
-                            </div>
+                            <VoiceRecorderUI
+                              variant="inline"
+                              onFinish={async (audioBlob) => {
+                                setIsRecording(false);
+                                setIsSendingComment(true);
+                                try {
+                                  const audioFile = new File([audioBlob], `voice-note-${Date.now()}.webm`, { type: audioBlob.type || 'audio/webm' });
+                                  const formData = new FormData();
+                                  formData.append("file", audioFile);
+
+                                  const res = await fetch("/api/upload", {
+                                    method: "POST",
+                                    body: formData,
+                                  });
+
+                                  if (!res.ok) throw new Error("Upload failed");
+                                  const data = await res.json();
+                                  if (!data.url) throw new Error("No URL returned from upload");
+
+                                  await submitMediaComment('Voice Note', 'audio', data.url);
+                                } catch (err) {
+                                  console.error("Failed to upload voice note:", err);
+                                  alert("Failed to upload voice note. Please try again.");
+                                } finally {
+                                  setIsSendingComment(false);
+                                }
+                              }}
+                              onCancel={() => setIsRecording(false)}
+                            />
                           ) : (
                             <form onSubmit={(e) => { e.preventDefault(); handleSendComment(); }} className="flex gap-2">
                               <button 
@@ -2385,11 +3080,12 @@ export default function Home() {
                               ) : (
                                 <button 
                                   type="button"
-                                  onClick={startRecording}
+                                  onClick={() => setIsRecording(true)}
                                   disabled={isSendingComment}
-                                  className="shrink-0 p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-[#0F172A] transition-colors"
+                                  className="shrink-0 p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-[#0F172A] transition-colors cursor-pointer"
+                                  title="Record voice note"
                                 >
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                                  <Mic className="w-4 h-4" />
                                 </button>
                               )}
                             </form>
@@ -2403,6 +3099,16 @@ export default function Home() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {messageInfoComment && (
+          <MessageInfoModal
+            comment={messageInfoComment}
+            currentUsername={syncInfo?.username}
+            onClose={() => setMessageInfoComment(null)}
+          />
         )}
       </AnimatePresence>
 

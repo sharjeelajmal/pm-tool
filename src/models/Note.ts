@@ -7,6 +7,11 @@ export interface IComment {
   type?: string;
   mediaData?: string;
   createdAt: Date;
+  readBy?: string[];
+  deliveredTo?: string[];
+  isEdited?: boolean;
+  isDeleted?: boolean;
+  updatedAt?: Date;
 }
 
 export interface INote extends Document {
@@ -34,6 +39,11 @@ const CommentSchema = new Schema<IComment>({
   type: { type: String, default: "text" },
   mediaData: { type: String },
   createdAt: { type: Date, default: Date.now },
+  readBy: { type: [String], default: [] },
+  deliveredTo: { type: [String], default: [] },
+  isEdited: { type: Boolean, default: false },
+  isDeleted: { type: Boolean, default: false },
+  updatedAt: { type: Date },
 });
 
 const NoteSchema = new Schema<INote>(
@@ -55,7 +65,6 @@ const NoteSchema = new Schema<INote>(
   { timestamps: true }
 );
 
-// If the cached model exists but doesn't have the pin, isPinned, categoryId, portal, or new comment fields (due to Next.js hot-reloading), delete it so it gets re-compiled
 if (models.Note && (
   !models.Note.schema.paths.pin || 
   !models.Note.schema.paths.isPinned || 
@@ -65,7 +74,8 @@ if (models.Note && (
   !models.Note.schema.paths.createdBy || 
   !models.Note.schema.paths.isTrashed ||
   !models.Note.schema.paths.status ||
-  !(models.Note.schema.path('comments') as any)?.schema?.paths?.type
+  !(models.Note.schema.path('comments') as any)?.schema?.paths?.readBy ||
+  !(models.Note.schema.path('comments') as any)?.schema?.paths?.isEdited
 )) {
   delete (models as any).Note;
 }

@@ -124,6 +124,11 @@ export async function addCommentApi(id: string, text: string, type: string = 'te
       type?: string;
       mediaData?: string;
       createdAt: string;
+      readBy?: string[];
+      deliveredTo?: string[];
+      isEdited?: boolean;
+      isDeleted?: boolean;
+      updatedAt?: string;
     };
     error?: string;
   }>(`/api/notes/${encodeURIComponent(id)}/comment`, {
@@ -131,6 +136,44 @@ export async function addCommentApi(id: string, text: string, type: string = 'te
     body: JSON.stringify({ text, type, mediaData }),
   });
 }
+
+export async function editCommentApi(id: string, commentId: string, text: string) {
+  return apiFetch<{
+    success: boolean;
+    commentId?: string;
+    text?: string;
+    isEdited?: boolean;
+    updatedAt?: string;
+    error?: string;
+  }>(`/api/notes/${encodeURIComponent(id)}/comment`, {
+    method: "PUT",
+    body: JSON.stringify({ commentId, text }),
+  });
+}
+
+export async function deleteCommentApi(id: string, commentId: string) {
+  return apiFetch<{
+    success: boolean;
+    commentId?: string;
+    text?: string;
+    isDeleted?: boolean;
+    updatedAt?: string;
+    error?: string;
+  }>(`/api/notes/${encodeURIComponent(id)}/comment?commentId=${encodeURIComponent(commentId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function markCommentsAsReadApi(id: string) {
+  return apiFetch<{
+    success: boolean;
+    username?: string;
+    error?: string;
+  }>(`/api/notes/${encodeURIComponent(id)}/comment`, {
+    method: "PATCH",
+  });
+}
+
 
 export async function togglePinApi(id: string, isPinned: boolean) {
   return apiFetch<{ success: boolean; isPinned?: boolean; error?: string }>(
@@ -183,3 +226,25 @@ export async function createCategoryApi(name: string) {
     body: JSON.stringify({ name }),
   });
 }
+
+export async function updateCategoryApi(id: string, name: string) {
+  return apiFetch<{
+    success: boolean;
+    category?: { id: string; name: string };
+    error?: string;
+  }>(`/api/categories/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteCategoryApi(id: string) {
+  return apiFetch<{
+    success: boolean;
+    deletedNotesCount?: number;
+    error?: string;
+  }>(`/api/categories/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
