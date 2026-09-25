@@ -55,6 +55,32 @@ export async function POST(
 
     realtimeHub.broadcastToAll(id, "comment_added", { comment: newComment });
 
+    const recipients = new Set<string>();
+    (note.assignedTo || []).forEach((u: string) => {
+      if (u && u !== username) recipients.add(u);
+    });
+    if (note.createdBy && note.createdBy !== username) {
+      recipients.add(note.createdBy);
+    }
+
+    const previewText =
+      type === "audio"
+        ? "Sent a voice note 🎙️"
+        : type === "image"
+        ? "Shared an image 📷"
+        : newComment.text;
+
+    recipients.forEach((recipient) => {
+      realtimeHub.sendToUser(recipient, "assigned_note_message", {
+        noteId: id,
+        noteTitle: note.title || "Untitled Note",
+        sender: username,
+        text: previewText,
+        type: newComment.type,
+        createdAt: newComment.createdAt.toISOString(),
+      });
+    });
+
     return jsonResponse({
       success: true,
       comment: newComment,

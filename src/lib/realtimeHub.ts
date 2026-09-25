@@ -113,6 +113,40 @@ class RealtimeHub {
     const users = this.getActiveUsers(noteId);
     this.broadcastToAll(noteId, "presence", { users });
   }
+
+  private userClients: Map<string, Set<SSEClient>> = new Map();
+
+  public subscribeUser(username: string, client: SSEClient) {
+    if (!this.userClients.has(username)) {
+      this.userClients.set(username, new Set());
+    }
+    this.userClients.get(username)!.add(client);
+
+    return () => {
+      this.unsubscribeUser(username, client);
+    };
+  }
+
+  public unsubscribeUser(username: string, client: SSEClient) {
+    const clients = this.userClients.get(username);
+    if (clients) {
+      clients.delete(client);
+      if (clients.size === 0) {
+        this.userClients.delete(username);
+      }
+    }
+  }
+
+  public sendToUser(username: string, eventType: string, data: any) {
+    const clients = this.userClients.get(username);
+    if (!clients) return;
+
+    clients.forEach((client) => {
+      try {
+        client.send(eventType, data);
+      } catch {}
+    });
+  }
 }
 
 const globalForRealtime = globalThis as unknown as { realtimeHub?: RealtimeHub };

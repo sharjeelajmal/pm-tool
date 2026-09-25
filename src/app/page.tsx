@@ -43,6 +43,7 @@ import { VoiceNotePlayer } from "@/components/voice/VoiceNotePlayer";
 import { VoiceRecorderUI } from "@/components/voice/VoiceRecorderUI";
 import { MessageStatusTicks } from "@/components/chat/MessageStatusTicks";
 import { MessageInfoModal } from "@/components/chat/MessageInfoModal";
+import { TopNotificationBanner, AssignedMessageNotification } from "@/components/chat/TopNotificationBanner";
 import { 
   fetchNotesApi, 
   saveNoteApi, 
@@ -217,6 +218,45 @@ export default function Home() {
       return () => clearTimeout(timer);
     }
   }, [showChatPanel, activeNoteId, syncInfo?.portal, scrollToBottom]);
+
+  const [activeNotification, setActiveNotification] = React.useState<AssignedMessageNotification | null>(null);
+
+  React.useEffect(() => {
+    if (!syncInfo?.username) return;
+
+    const notifSource = new EventSource("/api/realtime/notifications");
+
+    notifSource.addEventListener("assigned_note_message", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data && data.noteId) {
+          if (isEditingRef.current && activeNoteIdRef.current === data.noteId && showChatPanelRef.current) {
+            return;
+          }
+
+          setActiveNotification({
+            id: "notif-" + Date.now(),
+            noteId: data.noteId,
+            noteTitle: data.noteTitle,
+            sender: data.sender,
+            text: data.text,
+            type: data.type,
+            createdAt: data.createdAt,
+          });
+        }
+      } catch {}
+    });
+
+    return () => {
+      notifSource.close();
+    };
+  }, [syncInfo?.username]);
+
+  const handleOpenNotificationNote = (noteId: string) => {
+    setActiveNotification(null);
+    openEditor(noteId);
+    setShowChatPanel(true);
+  };
 
   const handleLogout = React.useCallback(async () => {
     if (isLoggingOut) return;
@@ -3111,6 +3151,12 @@ export default function Home() {
           />
         )}
       </AnimatePresence>
+
+      <TopNotificationBanner
+        notification={activeNotification}
+        onOpen={handleOpenNotificationNote}
+        onDismiss={() => setActiveNotification(null)}
+      />
 
       {isUserModalOpen && <UserManagementModal onClose={() => setIsUserModalOpen(false)} />}
     </div>
