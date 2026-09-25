@@ -5,3 +5,4 @@ const NO_CACHE_HEADERS = {
 export function jsonResponse(data: unknown, status = 200) {
   return Response.json(data, { status, headers: NO_CACHE_HEADERS });
 }
+// End
