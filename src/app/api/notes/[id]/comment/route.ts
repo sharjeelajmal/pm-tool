@@ -3,6 +3,7 @@ import { Note } from "@/models/Note";
 import { jsonResponse } from "@/lib/apiHeaders";
 import { getAuthPayload } from "@/lib/authUtil";
 import { realtimeHub } from "@/lib/realtimeHub";
+import mongoose from "mongoose";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -28,7 +29,8 @@ export async function POST(
     await connectDB();
 
     const activeUsers = realtimeHub.getActiveUsers(id);
-    const deliveredSet = new Set<string>([username, ...activeUsers]);
+    const onlineUsers = realtimeHub.getOnlineUsers();
+    const deliveredSet = new Set<string>([username, ...activeUsers, ...onlineUsers]);
 
     const newComment = {
       id: "cmt-" + Date.now().toString(),
@@ -282,8 +284,15 @@ export async function PATCH(
     }
 
     await connectDB();
+    const query: any = { portal };
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      query._id = new mongoose.Types.ObjectId(id);
+    } else {
+      query._id = id;
+    }
+
     await Note.updateOne(
-      { _id: id, portal },
+      query,
       {
         $addToSet: {
           "comments.$[].readBy": username,
@@ -292,7 +301,8 @@ export async function PATCH(
       }
     );
 
-    realtimeHub.broadcastToAll(id, "comments_read", { username });
+    realtimeHub.broadcastToAll(id, "comments_read", { noteId: id, username });
+    realtimeHub.broadcastToAllUsers("comments_read_global", { noteId: id, username });
 
     return jsonResponse({ success: true, username });
   } catch (error) {

@@ -30,10 +30,17 @@ export function MessageInfoModal({
   currentUsername,
   onClose,
 }: MessageInfoModalProps) {
-  const isMe = comment.username === currentUsername;
-  const readers = (comment.readBy || []).filter((u) => u !== comment.username);
+  const normCurrent = (currentUsername || "").toLowerCase().trim();
+  const normSender = (comment.username || "").toLowerCase().trim();
+  const isMe = normSender === normCurrent;
+  const readers = (comment.readBy || []).filter(
+    (u) => u && u.toLowerCase().trim() !== normSender
+  );
   const deliveredUsers = (comment.deliveredTo || []).filter(
-    (u) => u !== comment.username && !readers.includes(u)
+    (u) =>
+      u &&
+      u.toLowerCase().trim() !== normSender &&
+      !readers.some((r) => r.toLowerCase().trim() === u.toLowerCase().trim())
   );
 
   const formatFullDate = (dateStr: string) => {
@@ -207,7 +214,7 @@ export function MessageInfoModal({
                           {user.slice(0, 1).toUpperCase()}
                         </div>
                         <span>{user}</span>
-                        {readers.includes(user) && (
+                        {readers.some((r) => r.toLowerCase().trim() === user.toLowerCase().trim()) && (
                           <span className="text-[10px] text-sky-500 font-medium ml-auto">
                             Read
                           </span>

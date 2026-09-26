@@ -1,5 +1,6 @@
 import { connectDB } from "@/lib/db";
 import { Note } from "@/models/Note";
+import { User } from "@/models/User";
 import { z } from "zod";
 
 export const SaveNoteInputSchema = z.object({
@@ -84,9 +85,24 @@ export async function fetchAllNotes(portal: string, username?: string, isAdmin?:
     
     // Fetch all notes (including trashed, we will filter them in the client)
     const dbNotes = await Note.find(query).sort({ isPinned: -1, updatedAt: -1 });
+
+    let validUsernames: Set<string> | null = null;
+    if (portal === "business") {
+      const validUsers = await User.find({ portal: "business" }, "username").lean();
+      validUsernames = new Set(validUsers.map((u: any) => u.username.toLowerCase().trim()));
+    }
+
     return {
       success: true as const,
-      notes: dbNotes.map((note) => formatNote(note)),
+      notes: dbNotes.map((note) => {
+        const formatted = formatNote(note);
+        if (validUsernames) {
+          formatted.assignedTo = (formatted.assignedTo || []).filter((u) =>
+            validUsernames.has(u.toLowerCase().trim())
+          );
+        }
+        return formatted;
+      }),
     };
   } catch (error) {
     console.error("fetchNotes failed:", error);

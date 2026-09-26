@@ -24,7 +24,15 @@ const itemVariants: Variants = {
   },
 };
 
-export function UserManagementModal({ onClose }: { onClose: () => void }) {
+export function UserManagementModal({
+  onClose,
+  onUserDeleted,
+  onUsersChange,
+}: {
+  onClose: () => void;
+  onUserDeleted?: (deletedUsername: string) => void;
+  onUsersChange?: () => void;
+}) {
   const [users, setUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -75,6 +83,9 @@ export function UserManagementModal({ onClose }: { onClose: () => void }) {
         setPassword("");
         setEditingId(null);
         fetchUsers();
+        if (onUsersChange) {
+          onUsersChange();
+        }
       } else {
         setError(data.error || "Failed to save user");
       }
@@ -92,13 +103,20 @@ export function UserManagementModal({ onClose }: { onClose: () => void }) {
     setError("");
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, userUsername?: string) => {
     if (!confirm("Are you sure you want to delete this user?")) return;
     try {
       const res = await fetch(`/api/users/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (data.success) {
         fetchUsers();
+        const removed = data.username || userUsername;
+        if (removed && onUserDeleted) {
+          onUserDeleted(removed);
+        }
+        if (onUsersChange) {
+          onUsersChange();
+        }
       } else {
         setError(data.error || "Failed to delete user");
       }
@@ -316,7 +334,7 @@ export function UserManagementModal({ onClose }: { onClose: () => void }) {
                             <Pencil className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDelete(user.id)}
+                            onClick={() => handleDelete(user.id, user.username)}
                             className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500/40 bg-white/50 dark:bg-white/5"
                             title="Delete User"
                           >

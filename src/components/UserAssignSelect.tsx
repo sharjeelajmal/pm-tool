@@ -29,7 +29,13 @@ export function UserAssignSelect({ users, selectedUsernames, onChange }: UserAss
   }, []);
 
   const filteredUsers = users.filter((u) =>
+    u.username.toLowerCase().trim() !== "business" &&
     u.username.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const validSelected = selectedUsernames.filter((u) =>
+    u.toLowerCase().trim() !== "business" &&
+    users.some((user) => user.username.toLowerCase().trim() === u.toLowerCase().trim())
   );
 
   const toggleUser = (username: string) => {
@@ -52,9 +58,9 @@ export function UserAssignSelect({ users, selectedUsernames, onChange }: UserAss
       >
         <Users className="w-3 h-3" />
         <span className="truncate max-w-[80px]">
-          {selectedUsernames.length === 0 
+          {validSelected.length === 0 
             ? "Unassigned" 
-            : `${selectedUsernames.length} Assigned`}
+            : `${validSelected.length} Assigned`}
         </span>
         <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
       </button>

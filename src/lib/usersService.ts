@@ -1,5 +1,7 @@
 import { connectDB } from "@/lib/db";
 import { User } from "@/models/User";
+import { Note } from "@/models/Note";
+import { realtimeHub } from "@/lib/realtimeHub";
 import { z } from "zod";
 
 export const CreateUserSchema = z.object({
@@ -127,7 +129,17 @@ export async function deleteUser(id: string) {
     await connectDB();
     const deleted = await User.findOneAndDelete({ _id: id, portal: "business" });
     if (!deleted) return { success: false as const, error: "User not found" };
-    return { success: true as const };
+
+    const deletedUsername = deleted.username;
+
+    await Note.updateMany(
+      { portal: "business" },
+      { $pull: { assignedTo: deletedUsername } }
+    );
+
+    realtimeHub.broadcastToAllUsers("user_deleted", { username: deletedUsername });
+
+    return { success: true as const, username: deletedUsername };
   } catch (error) {
     console.error("deleteUser failed:", error);
     return {

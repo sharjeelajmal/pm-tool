@@ -15,8 +15,9 @@ export function MessageStatusTicks({
   currentUsername,
   className = "",
 }: MessageStatusTicksProps) {
-  const isRead = readBy.some((u) => u !== currentUsername);
-  const isDelivered = deliveredTo.some((u) => u !== currentUsername);
+  const normCurrent = (currentUsername || "").toLowerCase().trim();
+  const isRead = readBy.some((u) => u && u.toLowerCase().trim() !== normCurrent);
+  const isDelivered = deliveredTo.some((u) => u && u.toLowerCase().trim() !== normCurrent);
 
   if (isRead) {
     return (

@@ -116,6 +116,7 @@ function getGreeting() {
 export default function Home() {
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [activeNoteId, setActiveNoteId] = React.useState<string>("");
+  const activeNote = React.useMemo(() => notes.find(n => n.id === activeNoteId), [notes, activeNoteId]);
   const [isEditing, setIsEditing] = React.useState<boolean>(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [showSearch, setShowSearch] = React.useState<boolean>(false);
@@ -186,7 +187,7 @@ export default function Home() {
   const [chatReadCounts, setChatReadCounts] = React.useState<Record<string, number>>({});
   const [isLoggingOut, setIsLoggingOut] = React.useState<boolean>(false);
   const [activeCommentMenuId, setActiveCommentMenuId] = React.useState<string | null>(null);
-  const [messageInfoComment, setMessageInfoComment] = React.useState<CommentItem | null>(null);
+  const [selectedMessageInfoId, setSelectedMessageInfoId] = React.useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = React.useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = React.useState<string>("");
   const [isSubmittingEdit, setIsSubmittingEdit] = React.useState<boolean>(false);
@@ -194,12 +195,23 @@ export default function Home() {
   const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
 
-  const scrollToBottom = React.useCallback((instant = false) => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTo({
-        top: chatScrollRef.current.scrollHeight,
-        behavior: instant ? "auto" : "smooth",
-      });
+  const activeMessageInfoComment = React.useMemo(() => {
+    if (!selectedMessageInfoId) return null;
+    if (activeNote?.comments) {
+      const found = activeNote.comments.find((c) => c.id === selectedMessageInfoId);
+      if (found) return found;
+    }
+    for (const n of notes) {
+      const found = (n.comments || []).find((c) => c.id === selectedMessageInfoId);
+      if (found) return found;
+    }
+    return null;
+  }, [selectedMessageInfoId, activeNote?.comments, notes]);
+
+  const scrollToBottom = React.useCallback((instant = true) => {
+    const el = chatScrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
     }
     messagesEndRef.current?.scrollIntoView({
       behavior: instant ? "auto" : "smooth",
@@ -210,6 +222,7 @@ export default function Home() {
   React.useEffect(() => {
     showChatPanelRef.current = showChatPanel;
     if (showChatPanel && activeNoteId && syncInfo?.portal === "business") {
+      const curUser = (syncInfo?.username || "").trim();
       void markCommentsAsReadApi(activeNoteId);
       setNotes((prev) =>
         prev.map((n) => {
@@ -218,7 +231,8 @@ export default function Home() {
               ...n,
               comments: n.comments.map((c) => ({
                 ...c,
-                readBy: Array.from(new Set([...(c.readBy || []), syncInfo.username || ""])),
+                readBy: Array.from(new Set([...(c.readBy || []), curUser])),
+                deliveredTo: Array.from(new Set([...(c.deliveredTo || []), curUser])),
               })),
             };
           }
@@ -227,12 +241,21 @@ export default function Home() {
       );
     }
     if (showChatPanel && activeNoteId) {
-      const timer = setTimeout(() => {
-        scrollToBottom(true);
-      }, 100);
-      return () => clearTimeout(timer);
+      scrollToBottom(true);
+      const frameId = requestAnimationFrame(() => scrollToBottom(true));
+      const t1 = setTimeout(() => scrollToBottom(true), 50);
+      const t2 = setTimeout(() => scrollToBottom(true), 150);
+      const t3 = setTimeout(() => scrollToBottom(true), 320);
+      const t4 = setTimeout(() => scrollToBottom(true), 500);
+      return () => {
+        cancelAnimationFrame(frameId);
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+      };
     }
-  }, [showChatPanel, activeNoteId, syncInfo?.portal, syncInfo?.username, scrollToBottom]);
+  }, [showChatPanel, activeNoteId, activeNote?.comments?.length, syncInfo?.portal, syncInfo?.username, scrollToBottom]);
 
   const [activeNotification, setActiveNotification] = React.useState<AssignedMessageNotification | null>(null);
   const [onlineUsers, setOnlineUsers] = React.useState<string[]>([]);
@@ -265,6 +288,20 @@ export default function Home() {
           return;
         }
 
+        const isBusiness = !!syncInfo?.isAdmin || currentUsername === "business";
+        const assignedList: string[] = Array.isArray(data.assignedTo) ? data.assignedTo : [];
+        const isAssigned = assignedList.some(
+          (u) => u && u.toLowerCase().trim() === currentUsername
+        );
+        const isCreator = !!(data.createdBy && data.createdBy.toLowerCase().trim() === currentUsername);
+
+        // Regular users only receive events/notifs for notes they are assigned to (or created).
+        // Business admin is auto-assigned to all notes!
+        const isTarget = isBusiness || isAssigned || isCreator;
+        if (!isTarget) {
+          return;
+        }
+
         // 2. Real-time update note's comments so red unread count badge increments immediately without refresh!
         if (data.comment) {
           setNotes((prev) =>
@@ -279,38 +316,73 @@ export default function Home() {
           );
         }
 
-        // 3. Notification criteria: User is assigned, or is creator, or note unassigned in business portal
-        const assignedList: string[] = Array.isArray(data.assignedTo) ? data.assignedTo : [];
-        const isAssigned = assignedList.some(
-          (u) => u && u.toLowerCase().trim() === currentUsername
-        );
-        const isCreator = !!(data.createdBy && data.createdBy.toLowerCase().trim() === currentUsername);
-        const isTarget = isAssigned || isCreator || assignedList.length === 0;
-
-        if (isTarget) {
-          if (isEditingRef.current && activeNoteIdRef.current === data.noteId && showChatPanelRef.current) {
-            return;
-          }
-
-          setActiveNotification({
-            id: "notif-" + Date.now(),
-            noteId: data.noteId,
-            noteTitle: data.noteTitle || "Untitled Note",
-            sender: data.sender || "Colleague",
-            text: data.text || "New message",
-            type: data.type,
-            createdAt: data.createdAt || new Date().toISOString(),
-          });
+        if (isEditingRef.current && activeNoteIdRef.current === data.noteId && showChatPanelRef.current) {
+          void markCommentsAsReadApi(data.noteId);
+          return;
         }
+
+        setActiveNotification({
+          id: "notif-" + Date.now(),
+          noteId: data.noteId,
+          noteTitle: data.noteTitle || "Untitled Note",
+          sender: data.sender || "Colleague",
+          text: data.text || "New message",
+          type: data.type,
+          createdAt: data.createdAt || new Date().toISOString(),
+        });
       } catch (err) {
         console.error("Error in assigned_note_message handler:", err);
       }
     });
 
+    notifSource.addEventListener("comments_read_global", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data && data.noteId && data.username) {
+          const reader = data.username;
+          setNotes((prev) =>
+            prev.map((n) => {
+              if (n.id === data.noteId) {
+                return {
+                  ...n,
+                  comments: (n.comments || []).map((c) => ({
+                    ...c,
+                    readBy: Array.from(new Set([...(c.readBy || []), reader])),
+                    deliveredTo: Array.from(new Set([...(c.deliveredTo || []), reader])),
+                  })),
+                };
+              }
+              return n;
+            })
+          );
+        }
+      } catch {}
+    });
+
+    notifSource.addEventListener("user_deleted", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data && data.username) {
+          const deletedUser = data.username.toLowerCase().trim();
+          setUsersList((prev) =>
+            prev.filter((u) => u.username.toLowerCase().trim() !== deletedUser)
+          );
+          setNotes((prev) =>
+            prev.map((n) => ({
+              ...n,
+              assignedTo: (n.assignedTo || []).filter(
+                (u) => u && u.toLowerCase().trim() !== deletedUser
+              ),
+            }))
+          );
+        }
+      } catch {}
+    });
+
     return () => {
       notifSource.close();
     };
-  }, [syncInfo?.username]);
+  }, [syncInfo?.username, syncInfo?.isAdmin]);
 
   const handleOpenNotificationNote = (noteId: string) => {
     setActiveNotification(null);
@@ -361,6 +433,9 @@ export default function Home() {
     setIsEditing(false);
     setIsDraftDirty(false);
     setLockSettingsOpen(false);
+    setActiveNoteId("");
+    setShowChatPanel(false);
+    setSelectedMessageInfoId(null);
     if (editingId) {
       setNotes((prev) => {
         const note = prev.find((n) => n.id === editingId);
@@ -391,7 +466,27 @@ export default function Home() {
     } else {
       window.history.replaceState({ pronotesEditor: true, noteId }, "", `/?note=${noteId}`);
     }
-  }, []);
+
+    if (syncInfo?.portal === "business") {
+      const curUser = (syncInfo?.username || "").trim();
+      void markCommentsAsReadApi(noteId);
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id === noteId && n.comments) {
+            return {
+              ...n,
+              comments: n.comments.map((c) => ({
+                ...c,
+                readBy: Array.from(new Set([...(c.readBy || []), curUser])),
+                deliveredTo: Array.from(new Set([...(c.deliveredTo || []), curUser])),
+              })),
+            };
+          }
+          return n;
+        })
+      );
+    }
+  }, [syncInfo?.portal, syncInfo?.username]);
 
   const applySavedNoteToState = React.useCallback((oldId: string, savedNote: Note) => {
     setNotes((prev) => {
@@ -694,8 +789,6 @@ export default function Home() {
       window.removeEventListener("focus", refreshNotes);
     };
   }, [reloadFromServer]);
-
-  const activeNote = notes.find(n => n.id === activeNoteId);
 
   // Update when chat panel is open
   React.useEffect(() => {
@@ -1725,13 +1818,13 @@ export default function Home() {
 
   const getUnreadCommentCount = React.useCallback(
     (note: Note) => {
-      const currentUsername = syncInfo?.username;
+      const currentUsername = (syncInfo?.username || "").toLowerCase().trim();
       if (!currentUsername || !note.comments || note.comments.length === 0) return 0;
       return note.comments.filter(
         (c) =>
-          c.username !== currentUsername &&
+          c.username.toLowerCase().trim() !== currentUsername &&
           !c.isDeleted &&
-          !(c.readBy || []).includes(currentUsername)
+          !(c.readBy || []).some((u) => u && u.toLowerCase().trim() === currentUsername)
       ).length;
     },
     [syncInfo?.username]
@@ -1899,12 +1992,28 @@ export default function Home() {
                     )}
 
                     <div className="flex flex-wrap items-center gap-2 mt-auto pt-2 relative z-10">
-                      {note.assignedTo && note.assignedTo.map((u, idx) => (
-                        <span key={`assign-${idx}`} className="text-[9px] font-bold px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5" title="Assigned User">
-                          <Users className="w-2.5 h-2.5" />
-                          {u}
-                        </span>
-                      ))}
+                      {note.assignedTo &&
+                        note.assignedTo
+                          .filter(
+                            (u) =>
+                              u &&
+                              u.toLowerCase().trim() !== "business" &&
+                              (usersList.length === 0 ||
+                                usersList.some(
+                                  (ul) =>
+                                    ul.username.toLowerCase().trim() === u.toLowerCase().trim()
+                                ))
+                          )
+                          .map((u, idx) => (
+                            <span
+                              key={`assign-${idx}`}
+                              className="text-[9px] font-bold px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5"
+                              title="Assigned User"
+                            >
+                              <Users className="w-2.5 h-2.5" />
+                              {u}
+                            </span>
+                          ))}
                       {note.tags && note.tags.map((t, idx) => (
                         <span key={idx} className="text-[9px] font-bold px-2 py-1 rounded-md bg-blue-50/50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
                           <Tag className="w-2.5 h-2.5" />
@@ -2971,6 +3080,9 @@ export default function Home() {
                         animate={{ width: 320, opacity: 1, x: 0 }}
                         exit={{ width: 0, opacity: 0, x: 20 }}
                         transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                        onAnimationComplete={() => {
+                          scrollToBottom(true);
+                        }}
                         className="flex-shrink-0 flex flex-col bg-slate-50 dark:bg-neutral-900/50 rounded-2xl border border-slate-200/60 dark:border-white/10 overflow-hidden"
                       >
                         <div className="p-3 border-b border-slate-200/60 dark:border-white/10 flex items-center justify-between bg-white dark:bg-neutral-900">
@@ -2983,15 +3095,21 @@ export default function Home() {
                               type="button"
                               onClick={() => setShowAssignedMembersModal(true)}
                               className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors border border-slate-200/60 dark:border-white/10"
-                              title="View Assigned Members Online / Offline Status"
+                              title="View Workspace Members Online / Offline Status"
                             >
                               <Users className="w-3.5 h-3.5 text-blue-500" />
                               <span>Members</span>
-                              {activeNote &&
-                                ((activeNote.assignedTo || []).some((u) => onlineUsers.includes(u)) ||
-                                  (activeNote.createdBy && onlineUsers.includes(activeNote.createdBy))) && (
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
-                                )}
+                              {(onlineUsers.some((u) => u && u.toLowerCase().trim() === "business") ||
+                                (activeNote &&
+                                  ((activeNote.assignedTo || []).some((u) =>
+                                    onlineUsers.some((ou) => ou && ou.toLowerCase().trim() === u.toLowerCase().trim())
+                                  ) ||
+                                    (activeNote.createdBy &&
+                                      onlineUsers.some(
+                                        (ou) => ou && ou.toLowerCase().trim() === activeNote.createdBy?.toLowerCase().trim()
+                                      ))))) && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+                              )}
                             </button>
                             <button onClick={() => setShowChatPanel(false)} className="p-1 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10">
                               <X className="w-3.5 h-3.5" />
@@ -3045,7 +3163,7 @@ export default function Home() {
                                           <button
                                             type="button"
                                             onClick={() => {
-                                              setMessageInfoComment(c);
+                                              setSelectedMessageInfoId(c.id);
                                               setActiveCommentMenuId(null);
                                             }}
                                             className="flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
@@ -3148,7 +3266,7 @@ export default function Home() {
                                         <span>This message was deleted</span>
                                       </div>
                                     ) : isImage ? (
-                                      <img src={c.mediaData} alt="Shared image" className="max-w-full rounded-lg object-contain mt-1 max-h-48" />
+                                      <img src={c.mediaData} alt="Shared image" className="max-w-full rounded-lg object-contain mt-1 max-h-48" onLoad={() => scrollToBottom(true)} />
                                     ) : isAudio ? (
                                       <VoiceNotePlayer src={c.mediaData || ""} isMe={isMe} />
                                     ) : (
@@ -3268,11 +3386,11 @@ export default function Home() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {messageInfoComment && (
+        {activeMessageInfoComment && (
           <MessageInfoModal
-            comment={messageInfoComment}
+            comment={activeMessageInfoComment}
             currentUsername={syncInfo?.username}
-            onClose={() => setMessageInfoComment(null)}
+            onClose={() => setSelectedMessageInfoId(null)}
           />
         )}
       </AnimatePresence>
@@ -3290,12 +3408,34 @@ export default function Home() {
             createdBy={activeNote.createdBy}
             currentUsername={syncInfo?.username}
             onlineUsers={onlineUsers}
+            businessUsername={syncInfo?.portal === "business" && syncInfo?.isAdmin ? syncInfo.username : "business"}
             onClose={() => setShowAssignedMembersModal(false)}
           />
         )}
       </AnimatePresence>
 
-      {isUserModalOpen && <UserManagementModal onClose={() => setIsUserModalOpen(false)} />}
+      {isUserModalOpen && (
+        <UserManagementModal
+          onClose={() => setIsUserModalOpen(false)}
+          onUserDeleted={(deletedUsername) => {
+            const norm = deletedUsername.toLowerCase().trim();
+            setUsersList((prev) =>
+              prev.filter((u) => u.username.toLowerCase().trim() !== norm)
+            );
+            setNotes((prev) =>
+              prev.map((n) => ({
+                ...n,
+                assignedTo: (n.assignedTo || []).filter(
+                  (u) => u && u.toLowerCase().trim() !== norm
+                ),
+              }))
+            );
+          }}
+          onUsersChange={() => {
+            void reloadFromServer();
+          }}
+        />
+      )}
     </div>
   );
 }
