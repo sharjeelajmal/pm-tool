@@ -5,16 +5,16 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 
 export async function generateMetadata(): Promise<Metadata> {
   const auth = await getAuthPayload();
-  const isBusiness = auth.portal === "business";
-  
+  const appTitle = auth.isAdmin ? "Pro Notes" : "PM Tool";
+
   return {
-    title: isBusiness ? "ProManager - PM Tool" : "ProNotes - Personal Notepad",
-    description: isBusiness ? "A secure project management tool for your business." : "A clean, responsive personal notepad for saving important notes.",
+    title: appTitle,
+    description: "A secure project management tool.",
     manifest: "/manifest.json",
     appleWebApp: {
       capable: true,
       statusBarStyle: "black-translucent",
-      title: isBusiness ? "ProManager" : "ProNotes",
+      title: appTitle,
     },
   };
 }
@@ -32,12 +32,13 @@ export default function RootLayout({
       <head>
         <meta name="theme-color" content="#0B1120" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-        <link rel="icon" href="/icon-192.png" type="image/png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16" />
+        <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="ProNotes" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

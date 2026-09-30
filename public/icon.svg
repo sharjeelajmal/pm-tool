@@ -1,25 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
-  <rect width="512" height="512" rx="128" fill="#0B1120"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#3B82F6" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="shield-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3B82F6"/>
-      <stop offset="100%" stop-color="#1D4ED8"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F1B3D"/><stop offset="1" stop-color="#050A1A"/>
     </linearGradient>
+    <linearGradient id="ring" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#1D4ED8"/><stop offset=".5" stop-color="#3B82F6"/><stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <radialGradient id="halo" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#2563EB" stop-opacity=".45"/><stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E3A8A"/><stop offset="1" stop-color="#0B1633"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx=".5" cy=".0" r=".9">
+      <stop offset="0" stop-color="#fff" stop-opacity=".10"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="bl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="sd" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".55"/></filter>
+    <filter id="cs" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#60A5FA" flood-opacity=".6"/></filter>
   </defs>
-  <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
-  
-  <path d="M256 90 L380 135 V260 C380 345 325 410 256 435 C187 410 132 345 132 260 V135 L256 90 Z" fill="url(#shield-grad)" stroke="#2563EB" stroke-width="8"/>
-  
-  <g transform="translate(196, 176)">
-    <path d="M10 0 H90 L110 20 V110 C110 115 105 120 100 120 H10 C5 120 0 115 0 110 V10 C0 5 5 0 10 0 Z" fill="#F8FAFC"/>
-    <path d="M90 0 V20 H110 Z" fill="#E2E8F0"/>
-    <line x1="20" y1="40" x2="90" y2="40" stroke="#94A3B8" stroke-width="6" stroke-linecap="round"/>
-    <line x1="20" y1="65" x2="90" y2="65" stroke="#94A3B8" stroke-width="6" stroke-linecap="round"/>
-    <line x1="20" y1="90" x2="65" y2="90" stroke="#94A3B8" stroke-width="6" stroke-linecap="round"/>
-    <path d="M20 20 H30 M25 15 V25" stroke="#3B82F6" stroke-width="4" stroke-linecap="round"/>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#sheen)"/>
+  <g transform="translate(0.0 0.0) scale(1.0)">
+    
+      <circle cx="256" cy="256" r="235" fill="url(#halo)"/>
+      <circle cx="256" cy="256" r="150" fill="none" stroke="url(#ring)" stroke-width="44" stroke-linecap="round"
+        stroke-dasharray="735.1 942.4777960769379" transform="rotate(-90 256 256)" filter="url(#bl)" opacity=".75"/>
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#3B82F6" stroke-opacity=".10" stroke-width="44"/>
+    <circle cx="256" cy="256" r="150" fill="none" stroke="url(#ring)" stroke-width="44" stroke-linecap="round"
+      stroke-dasharray="735.1 942.4777960769379" transform="rotate(-90 256 256)"/>
+    <circle cx="256" cy="256" r="104" fill="url(#core)" filter="url(#sd)"/>
+    <circle cx="256" cy="256" r="104" fill="none" stroke="#93C5FD" stroke-opacity=".18" stroke-width="2"/>
+    <path d="M208 258 L242 292 L306 222" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" filter="url(#cs)"/>
   </g>
 </svg>
