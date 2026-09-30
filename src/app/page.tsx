@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -1839,209 +1839,266 @@ export default function Home() {
 
   const renderNoteCard = (note: Note) => {
     const unreadCount = getUnreadCommentCount(note);
+
+    const statusConfig = {
+      "Done":      { dot: "bg-emerald-400", badge: "bg-emerald-400/10 text-emerald-500 dark:text-emerald-400 ring-emerald-400/20" },
+      "In Review": { dot: "bg-amber-400",   badge: "bg-amber-400/10 text-amber-500 dark:text-amber-400 ring-amber-400/20" },
+      "In Progress": { dot: "bg-blue-400",  badge: "bg-blue-400/10 text-blue-500 dark:text-blue-400 ring-blue-400/20" },
+    } as Record<string, { dot: string; badge: string }>;
+
+    const statusStyle = note.status ? (statusConfig[note.status] ?? { dot: "bg-slate-400", badge: "bg-slate-400/10 text-slate-500 dark:text-slate-400 ring-slate-400/20" }) : null;
+
+    const preview = stripHtml(note.content);
+    const wordCount = preview.trim() ? preview.trim().split(/\s+/).length : 0;
+
     return (
-                  <motion.div
-                    key={note.id}
-                    onClick={() => handleNoteCardClick(note)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleNoteCardClick(note);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    layout
-                    initial={{ opacity: 0, scale: 0.9, y: 15 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9, y: -15, transition: { duration: 0.15 } }}
-                    whileHover={{ 
-                      y: -4, 
-                      boxShadow: "0 15px 30px -10px rgba(59, 130, 246, 0.15)",
-                      borderColor: "rgba(59, 130, 246, 0.3)"
-                    }}
-                    transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                    className={`w-full text-left p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#0F172A] border flex flex-col gap-3 sm:gap-4 transition-all duration-300 cursor-pointer shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] dark:shadow-[0_10px_30px_-10px_rgba(0,0,0,0.6)] relative group focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-                      selectedNoteIds.has(note.id)
-                        ? "border-blue-400 dark:border-blue-500/50 ring-2 ring-blue-400/30"
-                        : "border-slate-100 dark:border-white/5"
-                    }`}
+      <motion.div
+        key={note.id}
+        onClick={() => handleNoteCardClick(note)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleNoteCardClick(note);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        layout
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.12 } }}
+        whileHover={{ y: -4, transition: { type: "spring", stiffness: 500, damping: 28 } }}
+        transition={{ type: "spring", stiffness: 380, damping: 28 }}
+        className={`relative group flex flex-col w-full cursor-pointer rounded-[18px] overflow-hidden
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50
+          ${selectedNoteIds.has(note.id)
+            ? "ring-2 ring-blue-500/60 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
+            : ""
+          }
+        `}
+        style={{
+          background: "var(--card-bg)",
+          boxShadow: "var(--card-shadow)",
+        }}
+      >
+        {/* ── Glass surface ─────────────────────────────── */}
+        <div className="absolute inset-0 rounded-[18px] bg-white dark:bg-slate-900/70 border border-slate-200/70 dark:border-white/[0.07] backdrop-blur-md transition-colors duration-300 group-hover:border-slate-300/80 dark:group-hover:border-white/[0.12]" />
+
+        {/* ── Hover shimmer ──────────────────────────────── */}
+        <div className="absolute inset-0 rounded-[18px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+          style={{ background: "radial-gradient(600px circle at var(--mx,50%) var(--my,50%), rgba(99,102,241,0.06), transparent 60%)" }} />
+
+        {/* ── Drop shadow lift on hover ──────────────────── */}
+        <div className="absolute inset-0 rounded-[18px] shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_-6px_rgba(0,0,0,0.4)] group-hover:shadow-[0_16px_40px_-8px_rgba(0,0,0,0.14)] dark:group-hover:shadow-[0_20px_48px_-10px_rgba(0,0,0,0.65)] transition-shadow duration-300 pointer-events-none" />
+
+        {/* ── Selection checkbox ─────────────────────────── */}
+        {selectionMode && (
+          <div className="absolute top-3.5 right-3.5 z-30" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => toggleNoteSelection(note.id)}
+              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-150 ${
+                selectedNoteIds.has(note.id)
+                  ? "bg-blue-600 border-blue-600 text-white scale-110"
+                  : "border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
+              }`}
+              aria-label={selectedNoteIds.has(note.id) ? "Deselect" : "Select"}
+            >
+              {selectedNoteIds.has(note.id) && <CheckSquare className="w-3 h-3" />}
+            </button>
+          </div>
+        )}
+
+        {/* ── Card content ───────────────────────────────── */}
+        <div className="relative z-10 flex flex-col h-full p-4 sm:p-5 gap-3.5">
+
+          {/* Row 1 — Icon area + title + menu */}
+          <div className="flex items-start gap-3">
+            {/* Left icon / avatar */}
+            <div className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black select-none transition-transform duration-200 group-hover:scale-105 ${
+              note.isLocked
+                ? "bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                : note.isPinned
+                ? "bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                : "bg-gradient-to-br from-indigo-100 to-violet-100 dark:from-indigo-500/15 dark:to-violet-500/15 text-indigo-600 dark:text-indigo-400"
+            }`}>
+              {note.isLocked
+                ? <Lock className="w-4 h-4" />
+                : (note.title || "U").charAt(0).toUpperCase()
+              }
+            </div>
+
+            {/* Title + meta */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                {note.isPinned && (
+                  <button
+                    onClick={(e) => handleTogglePin(e, note)}
+                    className="shrink-0 text-blue-500 dark:text-blue-400 hover:scale-110 transition-transform"
+                    title="Unpin"
                   >
-                    {/* Decorative faint glow */}
-                    <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-600/5 to-indigo-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                    <Pin className="w-3 h-3 fill-current" />
+                  </button>
+                )}
+                <h3 className="font-semibold text-[13.5px] text-slate-900 dark:text-white leading-tight truncate">
+                  {note.title || "Untitled Note"}
+                </h3>
+                {unreadCount > 0 && (
+                  <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center shadow-sm shadow-rose-500/40 animate-pulse">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[10.5px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                  <Clock className="w-2.5 h-2.5" />
+                  {formatNoteDate(note.updatedAt)}
+                </span>
+                {note.createdBy && syncInfo?.portal === "business" && (
+                  <span className="text-[10.5px] text-violet-500/80 dark:text-violet-400/70 font-medium">
+                    · {note.createdBy}
+                  </span>
+                )}
+              </div>
+            </div>
 
-                    {selectionMode && (
-                      <div className="absolute top-3 right-3 z-20" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => toggleNoteSelection(note.id)}
-                          className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                            selectedNoteIds.has(note.id)
-                              ? "bg-blue-600 border-blue-600 text-white"
-                              : "border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/80"
-                          }`}
-                          aria-label={selectedNoteIds.has(note.id) ? "Deselect note" : "Select note"}
-                        >
-                          {selectedNoteIds.has(note.id) && <CheckSquare className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    )}
+            {/* 3-dot menu */}
+            {!selectionMode && (
+              <div className="relative shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 -mt-0.5">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                    setOpenMenuId(openMenuId === note.id ? null : note.id);
+                  }}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+                <AnimatePresence>
+                  {openMenuId === note.id && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.92, y: -6 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.92, y: -6 }}
+                      transition={{ duration: 0.1 }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute right-0 top-full mt-1.5 w-38 min-w-[9rem] bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-white/10 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 z-50 overflow-hidden flex flex-col py-1"
+                    >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleTogglePin(e, note); setOpenMenuId(null); }}
+                        className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 transition-colors w-full text-left"
+                      >
+                        <Pin className="w-3.5 h-3.5" />
+                        {note.isPinned ? "Unpin Note" : "Pin Note"}
+                      </button>
+                      <div className="mx-3 my-0.5 h-px bg-slate-100 dark:bg-white/[0.06]" />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteDialog({
+                            noteIds: [note.id],
+                            title: note.isTrashed ? "Delete permanently?" : "Move to trash?",
+                            subtitle: note.isTrashed
+                              ? "This action cannot be undone."
+                              : "This note will be moved to trash.",
+                          });
+                          setOpenMenuId(null);
+                        }}
+                        className="px-3.5 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors w-full text-left"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        {note.isTrashed ? "Delete Forever" : "Move to Trash"}
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
 
-                    <div className="flex flex-col gap-1.5 relative z-10 w-full">
-                      <div className="flex items-start justify-between w-full">
-                        <span className="font-bold text-sm text-slate-800 dark:text-white leading-snug line-clamp-1 flex items-center gap-2 min-w-0 pr-2">
-                          <button
-                            onClick={(e) => handleTogglePin(e, note)}
-                            className={`transition-colors ${
-                              note.isPinned 
-                                ? "text-blue-600 dark:text-[#3B82F6]" 
-                                : "text-slate-300 dark:text-slate-600 hover:text-slate-500"
-                            }`}
-                            title={note.isPinned ? "Unpin note from top" : "Pin note to top"}
-                          >
-                            <Pin className={`w-3.5 h-3.5 ${note.isPinned ? "fill-current" : ""}`} />
-                          </button>
-                          <span className="truncate">{note.title || "Untitled Note"}</span>
-                          {unreadCount > 0 && (
-                            <span
-                              className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-md shadow-rose-500/30 animate-pulse"
-                              title={`${unreadCount} unread message${unreadCount > 1 ? "s" : ""}`}
-                            >
-                              {unreadCount > 99 ? "99+" : unreadCount}
-                            </span>
-                          )}
-                        </span>
-                        
-                        {!selectionMode && (
-                          <div className="relative flex items-center gap-0.5 shrink-0 opacity-40 hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                e.nativeEvent.stopImmediatePropagation();
-                                setOpenMenuId(openMenuId === note.id ? null : note.id);
-                              }}
-                              className="p-1 rounded-md text-slate-500 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
-                            >
-                              <MoreHorizontal className="w-4 h-4" />
-                            </button>
-                            <AnimatePresence>
-                              {openMenuId === note.id && (
-                                <motion.div
-                                  initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                                  exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                                  transition={{ duration: 0.15 }}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="absolute right-0 top-full mt-1.5 w-32 bg-white dark:bg-[#1E293B] border border-slate-200/80 dark:border-white/10 rounded-xl shadow-xl shadow-slate-200/40 dark:shadow-black/40 z-50 overflow-hidden flex flex-col py-1"
-                                >
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleTogglePin(e, note);
-                                      setOpenMenuId(null);
-                                    }}
-                                    className="px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 flex items-center gap-2 transition-colors w-full text-left"
-                                  >
-                                    <Pin className="w-3.5 h-3.5" />
-                                    {note.isPinned ? "Unpin Note" : "Pin Note"}
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteDialog({
-                                        noteIds: [note.id],
-                                        title: note.isTrashed ? "Delete permanently?" : "Move to trash?",
-                                        subtitle: note.isTrashed 
-                                          ? "Are you sure you want to permanently delete this note? This action cannot be undone."
-                                          : "This note will be moved to the trash."
-                                      });
-                                      setOpenMenuId(null);
-                                    }}
-                                    className="px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 flex items-center gap-2 transition-colors w-full text-left"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    {note.isTrashed ? "Delete Permanently" : "Move to Trash"}
-                                  </button>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        )}
-                      </div>
-                      
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-[10px] text-slate-400 dark:text-slate-450 whitespace-nowrap flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {formatNoteDate(note.updatedAt)}
-                        </span>
-                        {note.createdBy && syncInfo?.portal === 'business' && (
-                          <span className="text-[10px] text-indigo-500/80 dark:text-indigo-400/80 whitespace-nowrap font-medium">
-                            By {note.createdBy}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+          {/* Row 2 — Divider */}
+          <div className="h-px bg-slate-100 dark:bg-white/[0.05]" />
 
-                    {note.isLocked && !note.content ? (
-                      <div className="flex items-center gap-2 text-amber-500/80 dark:text-amber-500/70 text-xs font-semibold py-1">
-                        <span className="text-amber-500 font-bold">Notepad PIN Protected</span>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed relative z-10 font-medium">
-                        {stripHtml(note.content) || "Empty note content..."}
-                      </p>
-                    )}
+          {/* Row 3 — Preview */}
+          {note.isLocked && !note.content ? (
+            <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-500/8 border border-amber-200/50 dark:border-amber-500/15">
+              <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="text-[11.5px] font-semibold text-amber-600 dark:text-amber-400">Content is PIN protected</span>
+            </div>
+          ) : (
+            <p className="text-[11.5px] text-slate-500 dark:text-slate-400/90 line-clamp-2 leading-[1.65] font-normal tracking-[0.01em]">
+              {preview || "No content yet…"}
+            </p>
+          )}
 
-                    <div className="flex flex-wrap items-center gap-2 mt-auto pt-2 relative z-10">
-                      {note.assignedTo &&
-                        note.assignedTo
-                          .filter(
-                            (u) =>
-                              u &&
-                              u.toLowerCase().trim() !== "business" &&
-                              (usersList.length === 0 ||
-                                usersList.some(
-                                  (ul) =>
-                                    ul.username.toLowerCase().trim() === u.toLowerCase().trim()
-                                ))
-                          )
-                          .map((u, idx) => (
-                            <span
-                              key={`assign-${idx}`}
-                              className="text-[9px] font-bold px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5"
-                              title="Assigned User"
-                            >
-                              <Users className="w-2.5 h-2.5" />
-                              {u}
-                            </span>
-                          ))}
-                      {note.tags && note.tags.map((t, idx) => (
-                        <span key={idx} className="text-[9px] font-bold px-2 py-1 rounded-md bg-blue-50/50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                          <Tag className="w-2.5 h-2.5" />
-                          {t}
-                        </span>
-                      ))}
-                      {syncInfo?.portal === 'business' && note.status && (
-                        <span className={`text-[9px] font-bold px-2 py-1 rounded-md flex items-center gap-1.5 ${
-                          note.status === 'Done' ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
-                          note.status === 'In Review' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400' :
-                          'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                        }`}>
-                          {note.status}
-                        </span>
-                      )}
-                      {!note.isLocked && note.patientId && (
-                        <span className="text-[9px] font-mono font-bold px-2 py-1 rounded-md bg-blue-50 dark:bg-[#3B82F6]/10 text-blue-600 dark:text-[#3B82F6]">
-                          {note.patientId}
-                        </span>
-                      )}
-                      {note.isLocked && (
-                        <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 flex items-center gap-1.5">
-                          <Lock className="w-2.5 h-2.5" />
-                          Locked
-                        </span>
-                      )}
-                    </div>
-                  </motion.div>
+          {/* Row 4 — Footer chips */}
+          <div className="mt-auto flex items-center justify-between gap-2">
+            {/* Left chips */}
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {note.assignedTo &&
+                note.assignedTo
+                  .filter((u) =>
+                    u && u.toLowerCase().trim() !== "business" &&
+                    (usersList.length === 0 || usersList.some((ul) => ul.username.toLowerCase().trim() === u.toLowerCase().trim()))
+                  )
+                  .slice(0, 3)
+                  .map((u, idx) => (
+                    <span
+                      key={`assign-${idx}`}
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-[3px] rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-200/60 dark:ring-emerald-500/20"
+                    >
+                      <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[7px] font-black shrink-0">
+                        {u.charAt(0).toUpperCase()}
+                      </span>
+                      {u}
+                    </span>
+                  ))}
+
+              {note.tags && note.tags.slice(0, 2).map((t, idx) => (
+                <span key={idx} className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-[3px] rounded-full bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 ring-1 ring-indigo-200/60 dark:ring-indigo-500/20">
+                  <Tag className="w-2.5 h-2.5 shrink-0" />
+                  {t}
+                </span>
+              ))}
+
+              {!note.isLocked && note.patientId && (
+                <span className="inline-flex items-center text-[10px] font-mono font-bold px-2 py-[3px] rounded-full bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 ring-1 ring-violet-200/60 dark:ring-violet-500/20">
+                  {note.patientId}
+                </span>
+              )}
+            </div>
+
+            {/* Right — status pill + word count */}
+            <div className="flex items-center gap-2 shrink-0">
+              {wordCount > 0 && (
+                <span className="text-[10px] text-slate-400 dark:text-slate-600 font-medium">{wordCount}w</span>
+              )}
+              {note.isLocked && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-[3px] rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 ring-1 ring-amber-200/60 dark:ring-amber-500/20">
+                  <Lock className="w-2.5 h-2.5" />
+                  Locked
+                </span>
+              )}
+              {syncInfo?.portal === "business" && statusStyle && note.status && (
+                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-[3px] rounded-full ring-1 ${statusStyle.badge}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${statusStyle.dot} shrink-0`} />
+                  {note.status}
+                </span>
+              )}
+              {!selectionMode && !note.isPinned && (
+                <button
+                  onClick={(e) => handleTogglePin(e, note)}
+                  className="text-slate-300 dark:text-slate-700 hover:text-blue-500 dark:hover:text-blue-400 transition-colors hover:scale-110 duration-150"
+                  title="Pin note"
+                >
+                  <Pin className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </motion.div>
     );
   };
 

@@ -32,6 +32,16 @@ body {
   overflow-x: hidden;
 }
 
+:root {
+  --card-bg: transparent;
+  --card-shadow: 0 2px 12px -4px rgba(0,0,0,0.07), 0 1px 3px -1px rgba(0,0,0,0.04);
+}
+
+.dark {
+  --card-bg: transparent;
+  --card-shadow: 0 4px 24px -6px rgba(0,0,0,0.45), 0 1px 4px -1px rgba(0,0,0,0.3);
+}
+
 /* Hide scrollbars utility */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
