@@ -1,23 +1,17 @@
 import type { Metadata } from "next";
-import { getAuthPayload } from "@/lib/authUtil";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
-export async function generateMetadata(): Promise<Metadata> {
-  const auth = await getAuthPayload();
-  const appTitle = auth.isAdmin ? "Pro Notes" : "PM Tool";
-
-  return {
-    title: appTitle,
-    description: "A secure project management tool.",
-    manifest: "/manifest.json",
-    appleWebApp: {
-      capable: true,
-      statusBarStyle: "black-translucent",
-      title: appTitle,
-    },
-  };
-}
+export const metadata: Metadata = {
+  title: "PM Tool",
+  description: "A secure project management tool.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "PM Tool",
+  },
+};
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
