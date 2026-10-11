@@ -2,6 +2,10 @@ import { connectDB } from "@/lib/db";
 import { User } from "@/models/User";
 import { Note } from "@/models/Note";
 import { realtimeHub } from "@/lib/realtimeHub";
+import { CrmAccess } from "@/models/crm/CrmAccess";
+import { CrmContact } from "@/models/crm/CrmContact";
+import { CrmOpportunity } from "@/models/crm/CrmOpportunity";
+import { CrmAppointment } from "@/models/crm/CrmAppointment";
 import { z } from "zod";
 
 export const CreateUserSchema = z.object({
@@ -99,6 +103,7 @@ export async function updateUser(id: string, data: z.infer<typeof UpdateUserSche
       return { success: false as const, error: "Username already exists" };
     }
 
+    const previous = await User.findOne({ _id: id, portal: "business" }, "username").lean<{ username: string }>();
     const updated = await User.findOneAndUpdate(
       { _id: id, portal: "business" },
       { username: cleanUsername, password: cleanPassword },
@@ -106,6 +111,17 @@ export async function updateUser(id: string, data: z.infer<typeof UpdateUserSche
     );
 
     if (!updated) return { success: false as const, error: "User not found" };
+
+    // Keep Leads module access and ownership pointing at the renamed user.
+    if (previous && previous.username !== cleanUsername) {
+      const from = previous.username;
+      await Promise.all([
+        CrmAccess.updateOne({ username: from }, { $set: { username: cleanUsername } }),
+        CrmContact.updateMany({ assignedTo: from }, { $set: { assignedTo: cleanUsername } }),
+        CrmOpportunity.updateMany({ assignedTo: from }, { $set: { assignedTo: cleanUsername } }),
+        CrmAppointment.updateMany({ assignedTo: from }, { $set: { assignedTo: cleanUsername } }),
+      ]);
+    }
 
     return {
       success: true as const,
@@ -136,6 +152,8 @@ export async function deleteUser(id: string) {
       { portal: "business" },
       { $pull: { assignedTo: deletedUsername } }
     );
+
+    await CrmAccess.deleteOne({ username: deletedUsername });
 
     realtimeHub.broadcastToAllUsers("user_deleted", { username: deletedUsername });
 

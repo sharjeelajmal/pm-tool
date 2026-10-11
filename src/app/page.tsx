@@ -35,8 +35,10 @@ import {
   User,
   Edit2,
   Check,
-  Mic
+  Mic,
+  Target
 } from "lucide-react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { logout } from "@/actions/auth";
 import { VoiceNotePlayer } from "@/components/voice/VoiceNotePlayer";
@@ -146,6 +148,7 @@ export default function Home() {
 
   const [openMenuId, setOpenMenuId] = React.useState<string | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = React.useState<boolean>(false);
+  const [hasCrmAccess, setHasCrmAccess] = React.useState<boolean>(false);
 
   // Close menu on click outside
   React.useEffect(() => {
@@ -1830,6 +1833,28 @@ export default function Home() {
     [syncInfo?.username]
   );
 
+  // Leads (CRM) module: admin always, members only when the admin has shared it with them.
+  React.useEffect(() => {
+    if (syncInfo?.portal !== "business") {
+      setHasCrmAccess(false);
+      return;
+    }
+    if (syncInfo.isAdmin) {
+      setHasCrmAccess(true);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/crm/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setHasCrmAccess(!!data.success);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [syncInfo?.portal, syncInfo?.isAdmin, syncInfo?.username]);
+
   const navLinks = [
     { id: "all", label: "All Notes", icon: FileText },
     { id: "pinned", label: "Pinned", icon: Pin },
@@ -2146,6 +2171,18 @@ export default function Home() {
                 </button>
               );
             })}
+            {hasCrmAccess && (
+              <Link
+                href="/crm"
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-colors relative z-10 group text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5"
+              >
+                <Target className="w-4 h-4 transition-transform group-hover:scale-110" />
+                <span className="flex-1">Leads</span>
+                <span className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400">
+                  CRM
+                </span>
+              </Link>
+            )}
           </nav>
 
           <div className="my-5 border-t border-slate-200/60 dark:border-white/10 mx-4" />
@@ -2564,6 +2601,19 @@ export default function Home() {
               <Download className="w-4 h-4 stroke-[2.5]" />
               <span className="hidden sm:inline">{isInstalled ? "App Installed" : "Install App"}</span>
             </button>
+          )}
+
+          {/* Leads (CRM) — mobile entry point; desktop uses the sidebar link */}
+          {hasCrmAccess && (
+            <Link
+              href="/crm"
+              className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold text-blue-600 dark:text-[#3B82F6] bg-blue-50/80 dark:bg-[#3B82F6]/10 hover:bg-blue-100 dark:hover:bg-[#3B82F6]/20 border border-blue-200/50 dark:border-blue-500/20 transition-colors"
+              style={{ minHeight: "40px" }}
+              title="Leads"
+            >
+              <Target className="w-4 h-4 stroke-[2.5]" />
+              Leads
+            </Link>
           )}
 
           {/* Search Trigger and Sliding Search Field (Desktop only) */}
