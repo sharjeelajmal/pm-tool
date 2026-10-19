@@ -155,7 +155,7 @@ export async function deleteUser(id: string) {
 
     await CrmAccess.deleteOne({ username: deletedUsername });
 
-    realtimeHub.broadcastToAllUsers("user_deleted", { username: deletedUsername });
+    await realtimeHub.broadcastToAllUsers("business", "user_deleted", { username: deletedUsername });
 
     return { success: true as const, username: deletedUsername };
   } catch (error) {

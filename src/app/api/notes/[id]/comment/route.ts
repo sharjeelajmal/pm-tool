@@ -28,8 +28,10 @@ export async function POST(
 
     await connectDB();
 
-    const activeUsers = realtimeHub.getActiveUsers(id);
-    const onlineUsers = realtimeHub.getOnlineUsers();
+    const [activeUsers, onlineUsers] = await Promise.all([
+      realtimeHub.getActiveUsers(id),
+      realtimeHub.getOnlineUsers(portal),
+    ]);
     const deliveredSet = new Set<string>([username, ...activeUsers, ...onlineUsers]);
 
     const newComment = {
@@ -55,7 +57,7 @@ export async function POST(
       return jsonResponse({ success: false, error: "Note not found" }, 404);
     }
 
-    realtimeHub.broadcast(id, username, "comment_added", { comment: newComment });
+    await realtimeHub.broadcast(id, username, "comment_added", { comment: newComment });
 
     const previewText =
       type === "audio"
@@ -64,7 +66,7 @@ export async function POST(
         ? "Shared an image 📷"
         : newComment.text;
 
-    realtimeHub.broadcastToAllUsers("assigned_note_message", {
+    await realtimeHub.broadcastToAllUsers(portal, "assigned_note_message", {
       noteId: id,
       noteTitle: note.title || "Untitled Note",
       sender: username,
@@ -152,7 +154,7 @@ export async function PUT(
       }
     );
 
-    realtimeHub.broadcastToAll(id, "comment_edited", {
+    await realtimeHub.broadcastToAll(id, "comment_edited", {
       commentId,
       text: updatedText,
       isEdited: true,
@@ -243,7 +245,7 @@ export async function DELETE(
       }
     );
 
-    realtimeHub.broadcastToAll(id, "comment_deleted", {
+    await realtimeHub.broadcastToAll(id, "comment_deleted", {
       commentId,
       text: deletedText,
       isDeleted: true,
@@ -301,8 +303,10 @@ export async function PATCH(
       }
     );
 
-    realtimeHub.broadcastToAll(id, "comments_read", { noteId: id, username });
-    realtimeHub.broadcastToAllUsers("comments_read_global", { noteId: id, username });
+    await Promise.all([
+      realtimeHub.broadcastToAll(id, "comments_read", { noteId: id, username }),
+      realtimeHub.broadcastToAllUsers(portal, "comments_read_global", { noteId: id, username }),
+    ]);
 
     return jsonResponse({ success: true, username });
   } catch (error) {

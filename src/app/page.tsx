@@ -1,6 +1,9 @@
 ﻿"use client";
 
 import * as React from "react";
+import type { PresenceChannel } from "pusher-js";
+import { getPusherClient } from "@/lib/pusherClient";
+import { noteChannel, onlineChannel, userChannel } from "@/lib/realtimeChannels";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Editor } from "@/components/Editor";
 import { CategorySelect } from "@/components/CategorySelect";
@@ -77,6 +80,28 @@ export interface CommentItem {
   updatedAt?: string;
 }
 
+// Fields sent by realtimeHub over Pusher; each event carries a subset.
+interface RealtimePayload {
+  username?: string;
+  users?: string[];
+  onlineUsers?: string[];
+  noteId?: string;
+  noteTitle?: string;
+  sender?: string;
+  text?: string;
+  type?: string;
+  createdAt?: string;
+  assignedTo?: string[];
+  createdBy?: string;
+  comment?: CommentItem;
+  commentId?: string;
+  updatedAt?: string;
+  content?: string;
+  title?: string;
+  fileType?: string;
+  reload?: boolean;
+}
+
 interface Note {
   id: string;
   title: string;
@@ -145,6 +170,7 @@ export default function Home() {
   const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const uploadingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const broadcastThrottleRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastTypingSentRef = React.useRef(0);
 
   const [openMenuId, setOpenMenuId] = React.useState<string | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = React.useState<boolean>(false);
@@ -265,22 +291,36 @@ export default function Home() {
   const [showAssignedMembersModal, setShowAssignedMembersModal] = React.useState<boolean>(false);
 
   React.useEffect(() => {
-    if (!syncInfo?.username) return;
+    if (!syncInfo?.username || !syncInfo.portal) return;
+    const pusher = getPusherClient();
+    if (!pusher) return;
 
-    const notifSource = new EventSource("/api/realtime/notifications");
+    const online = pusher.subscribe(onlineChannel(syncInfo.portal)) as PresenceChannel;
+    const personal = pusher.subscribe(userChannel(syncInfo.username));
+    const channels = [online, personal];
+    const bindUserEvent = (event: string, handler: (data: RealtimePayload) => void) =>
+      channels.forEach((channel) => channel.bind(event, handler));
 
-    notifSource.addEventListener("global_presence", (e) => {
+    // The online list is the presence channel's member list.
+    const syncOnlineUsers = () => {
+      const users: string[] = [];
+      online.members.each((member: { id: string }) => users.push(member.id));
+      setOnlineUsers(users);
+    };
+    online.bind("pusher:subscription_succeeded", syncOnlineUsers);
+    online.bind("pusher:member_added", syncOnlineUsers);
+    online.bind("pusher:member_removed", syncOnlineUsers);
+
+    bindUserEvent("global_presence", (data) => {
       try {
-        const data = JSON.parse(e.data);
         if (Array.isArray(data.onlineUsers)) {
           setOnlineUsers(data.onlineUsers);
         }
       } catch {}
     });
 
-    notifSource.addEventListener("assigned_note_message", (e) => {
+    bindUserEvent("assigned_note_message", (data) => {
       try {
-        const data = JSON.parse(e.data);
         if (!data || !data.noteId) return;
 
         const currentUsername = (syncInfo?.username || "").toLowerCase().trim();
@@ -306,13 +346,14 @@ export default function Home() {
         }
 
         // 2. Real-time update note's comments so red unread count badge increments immediately without refresh!
-        if (data.comment) {
+        const comment = data.comment;
+        if (comment) {
           setNotes((prev) =>
             prev.map((n) => {
               if (n.id === data.noteId) {
                 const comments = n.comments || [];
-                if (comments.some((c) => c.id === data.comment.id)) return n;
-                return { ...n, comments: [...comments, data.comment] };
+                if (comments.some((c) => c.id === comment.id)) return n;
+                return { ...n, comments: [...comments, comment] };
               }
               return n;
             })
@@ -338,9 +379,8 @@ export default function Home() {
       }
     });
 
-    notifSource.addEventListener("comments_read_global", (e) => {
+    bindUserEvent("comments_read_global", (data) => {
       try {
-        const data = JSON.parse(e.data);
         if (data && data.noteId && data.username) {
           const reader = data.username;
           setNotes((prev) =>
@@ -362,9 +402,8 @@ export default function Home() {
       } catch {}
     });
 
-    notifSource.addEventListener("user_deleted", (e) => {
+    bindUserEvent("user_deleted", (data) => {
       try {
-        const data = JSON.parse(e.data);
         if (data && data.username) {
           const deletedUser = data.username.toLowerCase().trim();
           setUsersList((prev) =>
@@ -383,9 +422,12 @@ export default function Home() {
     });
 
     return () => {
-      notifSource.close();
+      channels.forEach((channel) => {
+        channel.unbind_all();
+        pusher.unsubscribe(channel.name);
+      });
     };
-  }, [syncInfo?.username, syncInfo?.isAdmin]);
+  }, [syncInfo?.username, syncInfo?.isAdmin, syncInfo?.portal]);
 
   const handleOpenNotificationNote = (noteId: string) => {
     setActiveNotification(null);
@@ -948,6 +990,10 @@ export default function Home() {
 
   const broadcastTyping = React.useCallback(() => {
     if (!activeNoteId) return;
+    // Listeners keep "typing" visible for 2.5s, so one ping every 1.5s is enough (not one per keystroke).
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 1500) return;
+    lastTypingSentRef.current = now;
     fetch(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -974,11 +1020,53 @@ export default function Home() {
       return;
     }
 
-    const eventSource = new EventSource(`/api/notes/${encodeURIComponent(activeNoteId)}/collaborate`);
+    const pusher = getPusherClient();
+    if (!pusher) return;
 
-    eventSource.addEventListener("presence", (e) => {
+    const channel = pusher.subscribe(noteChannel(activeNoteId)) as PresenceChannel;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    // Collaborators are the presence channel's members, minus me.
+    const syncCollaborators = () => {
+      const others: string[] = [];
+      channel.members.each((member: { id: string }) => {
+        if (member.id !== syncInfo?.username) others.push(member.id);
+      });
+      setCollaborators(others);
+    };
+    channel.bind("pusher:subscription_succeeded", syncCollaborators);
+    channel.bind("pusher:member_added", syncCollaborators);
+    channel.bind("pusher:member_removed", syncCollaborators);
+
+    const applyRemoteContent = (content?: string, title?: string) => {
+      setNotes((prev) =>
+        prev.map((note) =>
+          note.id === activeNoteId
+            ? {
+                ...note,
+                content: content !== undefined ? content : note.content,
+                title: title !== undefined ? title : note.title,
+                updatedAt: "Just now",
+              }
+            : note
+        )
+      );
+      setCollaborativeUpdateKey((k) => k + 1);
+    };
+
+    // Notes too big for one Pusher event arrive as a "reload" ping; fetch the saved copy once the writer pauses.
+    const reloadRemoteContent = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(async () => {
+        const result = await fetchNotesApi();
+        const fresh = result.success ? result.notes?.find((n) => n.id === activeNoteId) : undefined;
+        if (fresh && !disposed) applyRemoteContent(fresh.content, fresh.title);
+      }, 600);
+    };
+
+    channel.bind("presence", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.users && Array.isArray(data.users)) {
           const others = data.users.filter((u: string) => u !== syncInfo?.username);
           setCollaborators(others);
@@ -986,9 +1074,8 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("typing", (e) => {
+    channel.bind("typing", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.username && data.username !== syncInfo?.username) {
           setRemoteTypingUser(data.username);
           if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -999,9 +1086,8 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("uploading", (e) => {
+    channel.bind("uploading", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.username && data.username !== syncInfo?.username) {
           setRemoteUploadingUser(data.username);
           if (uploadingTimeoutRef.current) clearTimeout(uploadingTimeoutRef.current);
@@ -1012,43 +1098,31 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("content_update", (e) => {
+    channel.bind("content_update", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.username && data.username !== syncInfo?.username) {
-          setNotes((prev) =>
-            prev.map((note) =>
-              note.id === activeNoteId
-                ? {
-                    ...note,
-                    content: data.content !== undefined ? data.content : note.content,
-                    title: data.title !== undefined ? data.title : note.title,
-                    updatedAt: "Just now",
-                  }
-                : note
-            )
-          );
-          setCollaborativeUpdateKey((k) => k + 1);
+          if (data.reload) reloadRemoteContent();
+          else applyRemoteContent(data.content, data.title);
         }
       } catch {}
     });
 
-    eventSource.addEventListener("comment_added", (e) => {
+    channel.bind("comment_added", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
-        if (data.comment) {
-          if (data.comment.username === syncInfo?.username) {
+        const comment = data.comment;
+        if (comment) {
+          if (comment.username === syncInfo?.username) {
             return;
           }
           setNotes((prev) =>
             prev.map((note) => {
               if (note.id === activeNoteId) {
                 const currentComments = note.comments || [];
-                const exists = currentComments.some((c) => c.id === data.comment.id);
+                const exists = currentComments.some((c) => c.id === comment.id);
                 if (exists) return note;
                 return {
                   ...note,
-                  comments: [...currentComments, data.comment],
+                  comments: [...currentComments, comment],
                 };
               }
               return note;
@@ -1062,9 +1136,8 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("comment_edited", (e) => {
+    channel.bind("comment_edited", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.commentId) {
           setNotes((prev) =>
             prev.map((note) => {
@@ -1075,7 +1148,7 @@ export default function Home() {
                     c.id === data.commentId
                       ? {
                           ...c,
-                          text: data.text,
+                          text: data.text ?? c.text,
                           isEdited: true,
                           updatedAt: data.updatedAt,
                         }
@@ -1090,9 +1163,8 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("comment_deleted", (e) => {
+    channel.bind("comment_deleted", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
         if (data.commentId) {
           setNotes((prev) =>
             prev.map((note) => {
@@ -1103,7 +1175,7 @@ export default function Home() {
                     c.id === data.commentId
                       ? {
                           ...c,
-                          text: data.text,
+                          text: data.text ?? c.text,
                           isDeleted: true,
                           mediaData: "",
                           updatedAt: data.updatedAt,
@@ -1119,10 +1191,10 @@ export default function Home() {
       } catch {}
     });
 
-    eventSource.addEventListener("comments_read", (e) => {
+    channel.bind("comments_read", (data: RealtimePayload) => {
       try {
-        const data = JSON.parse(e.data);
-        if (data.username) {
+        const reader = data.username;
+        if (reader) {
           setNotes((prev) =>
             prev.map((note) => {
               if (note.id === activeNoteId) {
@@ -1130,8 +1202,8 @@ export default function Home() {
                   ...note,
                   comments: (note.comments || []).map((c) => ({
                     ...c,
-                    readBy: Array.from(new Set([...(c.readBy || []), data.username])),
-                    deliveredTo: Array.from(new Set([...(c.deliveredTo || []), data.username])),
+                    readBy: Array.from(new Set([...(c.readBy || []), reader])),
+                    deliveredTo: Array.from(new Set([...(c.deliveredTo || []), reader])),
                   })),
                 };
               }
@@ -1143,7 +1215,10 @@ export default function Home() {
     });
 
     return () => {
-      eventSource.close();
+      disposed = true;
+      if (reloadTimer) clearTimeout(reloadTimer);
+      channel.unbind_all();
+      pusher.unsubscribe(channel.name);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (uploadingTimeoutRef.current) clearTimeout(uploadingTimeoutRef.current);
     };

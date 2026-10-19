@@ -1,4 +1,4 @@
-import { realtimeHub } from "@/lib/realtimeHub";
+import { fitsInEvent, realtimeHub } from "@/lib/realtimeHub";
 import { getAuthPayload } from "@/lib/authUtil";
 import { jsonResponse } from "@/lib/apiHeaders";
 import { connectDB } from "@/lib/db";
@@ -8,72 +8,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-export async function GET(request: Request, context: RouteContext) {
-  try {
-    const { id: noteId } = await context.params;
-    const auth = await getAuthPayload();
-    const username = auth.username || "Guest";
-
-    const encoder = new TextEncoder();
-    let isClosed = false;
-
-    const stream = new ReadableStream({
-      start(controller) {
-        const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-        const send = (eventType: string, data: any) => {
-          if (isClosed) return;
-          try {
-            const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
-            controller.enqueue(encoder.encode(payload));
-          } catch {}
-        };
-
-        const unsubscribe = realtimeHub.subscribe(noteId, {
-          id: clientId,
-          noteId,
-          username,
-          send,
-        });
-
-        const activeUsers = realtimeHub.getActiveUsers(noteId);
-        send("presence", { users: activeUsers });
-
-        const heartbeat = setInterval(() => {
-          if (isClosed) {
-            clearInterval(heartbeat);
-            return;
-          }
-          try {
-            controller.enqueue(encoder.encode(": keepalive\n\n"));
-          } catch {
-            clearInterval(heartbeat);
-          }
-        }, 15000);
-
-        request.signal.addEventListener("abort", () => {
-          isClosed = true;
-          clearInterval(heartbeat);
-          unsubscribe();
-          try {
-            controller.close();
-          } catch {}
-        });
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (error) {
-    return jsonResponse({ success: false, error: "Failed to establish realtime connection" }, 500);
-  }
-}
 
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -87,29 +21,18 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     if (body.action === "typing") {
-      realtimeHub.setActivity(noteId, username, "typing");
-      realtimeHub.broadcast(noteId, username, "typing", { username });
+      await realtimeHub.setActivity(noteId, username, "typing");
       return jsonResponse({ success: true }, 200);
     }
 
     if (body.action === "uploading") {
-      realtimeHub.setActivity(noteId, username, "uploading");
-      realtimeHub.broadcast(noteId, username, "uploading", {
-        username,
-        fileType: body.fileType || "media",
-      });
+      await realtimeHub.setActivity(noteId, username, "uploading", { fileType: body.fileType || "media" });
       return jsonResponse({ success: true }, 200);
     }
 
     if (body.action === "content_update") {
-      realtimeHub.setActivity(noteId, username, "active");
-      realtimeHub.broadcast(noteId, username, "content_update", {
-        username,
-        content: body.content,
-        title: body.title,
-        updatedAt: new Date().toISOString(),
-      });
-
+      // Save before broadcasting: a note too big for one Pusher event is sent as a "reload" ping,
+      // and listeners then fetch the saved copy.
       const isObjectId = /^[0-9a-fA-F]{24}$/.test(noteId);
       if (isObjectId && (body.content !== undefined || body.title !== undefined)) {
         await connectDB();
@@ -117,12 +40,17 @@ export async function POST(request: Request, context: RouteContext) {
         if (body.content !== undefined) updateFields.content = body.content;
         if (body.title !== undefined) updateFields.title = body.title;
 
-        await Note.findOneAndUpdate(
-          { _id: noteId, portal: auth.portal },
-          updateFields,
-          { new: true }
-        );
+        await Note.updateOne({ _id: noteId, portal: auth.portal }, updateFields);
       }
+
+      const updatedAt = new Date().toISOString();
+      const update = { username, content: body.content, title: body.title, updatedAt };
+      await realtimeHub.broadcast(
+        noteId,
+        username,
+        "content_update",
+        fitsInEvent(update) ? update : { username, updatedAt, reload: true }
+      );
 
       return jsonResponse({ success: true }, 200);
     }

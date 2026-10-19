@@ -1,192 +1,92 @@
-export interface SSEClient {
-  id: string;
-  noteId: string;
-  username: string;
-  send: (eventType: string, data: any) => void;
+import Pusher from "pusher";
+import { noteChannel, onlineChannel, userChannel } from "@/lib/realtimeChannels";
+
+// Pusher rejects events whose data is 10KB or more.
+const MAX_EVENT_BYTES = 10_000;
+
+let pusher: Pusher | null | undefined;
+
+export function getPusherServer() {
+  if (pusher === undefined) {
+    const { PUSHER_APP_ID: appId, PUSHER_KEY: key, PUSHER_SECRET: secret, PUSHER_CLUSTER: cluster } = process.env;
+    pusher = appId && key && secret && cluster ? new Pusher({ appId, key, secret, cluster, useTLS: true }) : null;
+    if (!pusher) console.warn("Pusher env vars are missing; realtime events are disabled.");
+  }
+  return pusher;
 }
 
-export interface PresenceUser {
-  username: string;
-  status: "active" | "typing" | "uploading";
-  lastSeen: number;
+export function fitsInEvent(data: unknown) {
+  return Buffer.byteLength(JSON.stringify(data)) < MAX_EVENT_BYTES;
 }
 
+// Stateless: presence lives in Pusher presence channels, so nothing is kept in memory here.
 class RealtimeHub {
-  private clients: Map<string, Set<SSEClient>> = new Map();
-  private presence: Map<string, Map<string, PresenceUser>> = new Map();
-
-  public subscribe(noteId: string, client: SSEClient) {
-    if (!this.clients.has(noteId)) {
-      this.clients.set(noteId, new Set());
-    }
-    this.clients.get(noteId)!.add(client);
-
-    if (!this.presence.has(noteId)) {
-      this.presence.set(noteId, new Map());
-    }
-    this.presence.get(noteId)!.set(client.username, {
-      username: client.username,
-      status: "active",
-      lastSeen: Date.now(),
-    });
-
-    this.broadcastPresence(noteId);
-
-    return () => {
-      this.unsubscribe(noteId, client);
-    };
-  }
-
-  public unsubscribe(noteId: string, client: SSEClient) {
-    const noteClients = this.clients.get(noteId);
-    if (noteClients) {
-      noteClients.delete(client);
-      if (noteClients.size === 0) {
-        this.clients.delete(noteId);
-      }
-    }
-
-    const hasOtherConnection = Array.from(this.clients.get(noteId) || []).some(
-      (c) => c.username === client.username
-    );
-
-    if (!hasOtherConnection) {
-      const notePresence = this.presence.get(noteId);
-      if (notePresence) {
-        notePresence.delete(client.username);
-        if (notePresence.size === 0) {
-          this.presence.delete(noteId);
-        }
-      }
-    }
-
-    this.broadcastPresence(noteId);
-  }
-
-  public setActivity(noteId: string, username: string, status: "active" | "typing" | "uploading") {
-    const notePresence = this.presence.get(noteId);
-    if (notePresence && notePresence.has(username)) {
-      const user = notePresence.get(username)!;
-      user.status = status;
-      user.lastSeen = Date.now();
+  private async trigger(channel: string, eventType: string, data: unknown) {
+    const client = getPusherServer();
+    if (!client) return;
+    try {
+      await client.trigger(channel, eventType, data);
+    } catch (error) {
+      console.error(`Pusher trigger "${eventType}" on ${channel} failed:`, error);
     }
   }
 
-  public getActiveUsers(noteId: string): string[] {
-    const notePresence = this.presence.get(noteId);
-    if (!notePresence) return [];
-    const now = Date.now();
-    const result: string[] = [];
-    notePresence.forEach((user, username) => {
-      if (now - user.lastSeen < 60000) {
-        result.push(username);
-      }
-    });
-    return result;
-  }
-
-  public broadcast(noteId: string, senderUsername: string, eventType: string, data: any) {
-    const noteClients = this.clients.get(noteId);
-    if (!noteClients) return;
-
-    noteClients.forEach((client) => {
-      if (client.username !== senderUsername) {
-        try {
-          client.send(eventType, data);
-        } catch {}
-      }
-    });
-  }
-
-  public broadcastToAll(noteId: string, eventType: string, data: any) {
-    const noteClients = this.clients.get(noteId);
-    if (!noteClients) return;
-
-    noteClients.forEach((client) => {
-      try {
-        client.send(eventType, data);
-      } catch {}
-    });
-  }
-
-  public broadcastPresence(noteId: string) {
-    const users = this.getActiveUsers(noteId);
-    this.broadcastToAll(noteId, "presence", { users });
-  }
-
-  private userClients: Map<string, Set<SSEClient>> = new Map();
-
-  public subscribeUser(username: string, client: SSEClient) {
-    if (!this.userClients.has(username)) {
-      this.userClients.set(username, new Set());
+  private async channelUsers(channel: string): Promise<string[]> {
+    const client = getPusherServer();
+    if (!client) return [];
+    try {
+      const res = await client.get({ path: `/channels/${channel}/users` });
+      if (!res.ok) return [];
+      const body = (await res.json()) as { users?: { id: string }[] };
+      return (body.users || []).map((u) => u.id);
+    } catch {
+      return [];
     }
-    this.userClients.get(username)!.add(client);
-    this.broadcastGlobalPresence();
-
-    return () => {
-      this.unsubscribeUser(username, client);
-    };
   }
 
-  public unsubscribeUser(username: string, client: SSEClient) {
-    const clients = this.userClients.get(username);
-    if (clients) {
-      clients.delete(client);
-      if (clients.size === 0) {
-        this.userClients.delete(username);
-      }
-    }
-    this.broadcastGlobalPresence();
+  // Pusher can't skip one user server-side; every client handler ignores events carrying its own username.
+  public broadcast(noteId: string, senderUsername: string, eventType: string, data: unknown) {
+    return this.trigger(noteChannel(noteId), eventType, data);
   }
 
-  public getOnlineUsers(): string[] {
-    return Array.from(this.userClients.keys());
+  public broadcastToAll(noteId: string, eventType: string, data: unknown) {
+    return this.trigger(noteChannel(noteId), eventType, data);
   }
 
-  public isUserOnline(username: string): boolean {
-    const clients = this.userClients.get(username);
-    return !!(clients && clients.size > 0);
+  public setActivity(noteId: string, username: string, status: "typing" | "uploading", extra: Record<string, unknown> = {}) {
+    return this.trigger(noteChannel(noteId), status, { ...extra, username });
   }
 
-  public broadcastGlobalPresence() {
-    const onlineUsers = this.getOnlineUsers();
-    this.userClients.forEach((clients) => {
-      clients.forEach((client) => {
-        try {
-          client.send("global_presence", { onlineUsers });
-        } catch {}
-      });
-    });
+  public getActiveUsers(noteId: string) {
+    return this.channelUsers(noteChannel(noteId));
   }
 
-  public broadcastToAllUsers(eventType: string, data: any) {
-    this.userClients.forEach((clients) => {
-      clients.forEach((client) => {
-        try {
-          client.send(eventType, data);
-        } catch {}
-      });
-    });
+  public async broadcastPresence(noteId: string) {
+    const users = await this.getActiveUsers(noteId);
+    await this.trigger(noteChannel(noteId), "presence", { users });
   }
 
-  public sendToUser(username: string, eventType: string, data: any) {
-    const target = (username || "").toLowerCase().trim();
-    this.userClients.forEach((clients, u) => {
-      if (u.toLowerCase().trim() === target) {
-        clients.forEach((client) => {
-          try {
-            client.send(eventType, data);
-          } catch {}
-        });
-      }
-    });
+  public getOnlineUsers(portal: string) {
+    return this.channelUsers(onlineChannel(portal));
+  }
+
+  public async isUserOnline(portal: string, username: string) {
+    const target = username.toLowerCase().trim();
+    return (await this.getOnlineUsers(portal)).some((u) => u.toLowerCase().trim() === target);
+  }
+
+  public async broadcastGlobalPresence(portal: string) {
+    const onlineUsers = await this.getOnlineUsers(portal);
+    await this.trigger(onlineChannel(portal), "global_presence", { onlineUsers });
+  }
+
+  public broadcastToAllUsers(portal: string, eventType: string, data: unknown) {
+    return this.trigger(onlineChannel(portal), eventType, data);
+  }
+
+  public sendToUser(username: string, eventType: string, data: unknown) {
+    return this.trigger(userChannel(username), eventType, data);
   }
 }
 
-const globalForRealtime = globalThis as unknown as { realtimeHub?: RealtimeHub };
-
-export const realtimeHub = globalForRealtime.realtimeHub || new RealtimeHub();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForRealtime.realtimeHub = realtimeHub;
-}
+export const realtimeHub = new RealtimeHub();
