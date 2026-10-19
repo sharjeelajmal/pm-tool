@@ -9,7 +9,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Allow static files, manifest, sw, and api
+  // Allow the static files, manifest, sw, and api
   if (
     pathname.startsWith("/api") ||
     pathname.startsWith("/_next") ||
